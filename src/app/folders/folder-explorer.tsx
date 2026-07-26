@@ -33,6 +33,12 @@ type FolderDetails = TreeNode & {
   createdAt: string;
   updatedAt: string;
   breadcrumbs: Array<{ id: string; name: string }>;
+  effectiveLock: {
+    isLocked: boolean;
+    isDirectlyLocked: boolean;
+    sourceFolderId: string | null;
+    sourceFolderName: string | null;
+  };
   capabilities: {
     canUpload: boolean;
     canCreateSubfolder: boolean;
@@ -41,6 +47,7 @@ type FolderDetails = TreeNode & {
     canDelete: boolean;
     canRestore: boolean;
     canManagePermissions: boolean;
+    canLockFolder: boolean;
   };
 };
 
@@ -370,6 +377,41 @@ export function FolderExplorer({
     }
   }
 
+  async function toggleFolderLock() {
+    if (!selected) return;
+    const locking = !selected.isLocked;
+    const applyToDescendants =
+      locking &&
+      window.confirm("Bạn có muốn áp dụng khóa cho toàn bộ thư mục con không?");
+    if (
+      !window.confirm(
+        locking
+          ? `Khóa thư mục “${selected.name}”?`
+          : `Mở khóa thư mục “${selected.name}”?`,
+      )
+    ) {
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await requestJson(`/api/folders/${selected.id}/lock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locked: locking,
+          applyToDescendants,
+        }),
+      });
+      await reloadTree(locking ? "Đã khóa thư mục." : "Đã mở khóa thư mục.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Không thể thay đổi khóa",
+      );
+      setBusy(false);
+    }
+  }
+
   async function moveSelected() {
     if (!selected || !moveTargetId) return;
     setBusy(true);
@@ -616,8 +658,28 @@ export function FolderExplorer({
                       Phân quyền
                     </button>
                   ) : null}
+                  {selected.capabilities.canLockFolder ? (
+                    <button
+                      className="rounded-lg border border-amber-300 px-4 py-2 text-sm font-medium text-amber-800"
+                      disabled={busy}
+                      onClick={toggleFolderLock}
+                      type="button"
+                    >
+                      {selected.isLocked ? "Mở khóa" : "Khóa thư mục"}
+                    </button>
+                  ) : null}
                 </div>
               </div>
+
+              {selected.effectiveLock?.isLocked ? (
+                <p className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  🔒 Thư mục đang bị khóa
+                  {selected.effectiveLock.sourceFolderName
+                    ? ` bởi “${selected.effectiveLock.sourceFolderName}”`
+                    : ""}
+                  . Bạn vẫn có thể xem và tải xuống theo quyền hiện có.
+                </p>
+              ) : null}
 
               {permissionOpen ? (
                 <PermissionPanel
@@ -667,7 +729,11 @@ export function FolderExplorer({
               <DocumentPanel
                 canUpload={selected.capabilities.canUpload}
                 folderId={selected.id}
+                isAdmin={isAdmin}
                 key={selected.id}
+                moveTargets={loadedNodes
+                  .filter((node) => node.id !== selected.id)
+                  .map(({ id, name }) => ({ id, name }))}
               />
             </>
           ) : (

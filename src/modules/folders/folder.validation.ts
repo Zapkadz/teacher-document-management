@@ -36,6 +36,13 @@ export const moveFolderSchema = z
   })
   .strict();
 
+export const lockFolderSchema = z
+  .object({
+    locked: z.boolean(),
+    applyToDescendants: z.boolean().default(false),
+  })
+  .strict();
+
 const booleanQuerySchema = z
   .enum(["true", "false"])
   .transform((value) => value === "true")

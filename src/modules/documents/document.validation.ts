@@ -163,10 +163,75 @@ export const listDocumentsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
+export const updateDocumentSchema = z
+  .object({
+    title: z.string().trim().min(1).max(255),
+    description: z.string().trim().max(5000).default(""),
+  })
+  .strict();
+
+export const moveDocumentSchema = z
+  .object({
+    targetFolderId: z.uuid(),
+  })
+  .strict();
+
+export const restoreDocumentSchema = z
+  .object({
+    targetFolderId: z.uuid().optional(),
+  })
+  .strict();
+
+export const trashQuerySchema = z.object({
+  workspace: z
+    .enum(["personal", "shared"])
+    .transform((value) => (value === "personal" ? "PERSONAL" : "SHARED"))
+    .optional(),
+  entityType: z.literal("DOCUMENT").default("DOCUMENT"),
+  folderId: z.uuid().optional(),
+  deletedBy: z.uuid().optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+const trashItemSchema = z.object({
+  entityType: z.literal("DOCUMENT"),
+  entityId: z.uuid(),
+  targetFolderId: z.uuid().optional(),
+});
+
+export const restoreTrashSchema = z
+  .object({
+    items: z.array(trashItemSchema).min(1).max(100),
+  })
+  .strict();
+
+export const purgeTrashSchema = z
+  .object({
+    items: z
+      .array(
+        z.object({
+          entityType: z.literal("DOCUMENT"),
+          entityId: z.uuid(),
+        }),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
+
 export type UploadInitInput = z.infer<typeof uploadInitSchema>;
 export type UploadCompleteInput = z.infer<typeof uploadCompleteSchema>;
 export type CreateLinkInput = z.infer<typeof createLinkSchema>;
 export type ListDocumentsQuery = z.infer<typeof listDocumentsSchema>;
+export type UpdateDocumentInput = z.infer<typeof updateDocumentSchema>;
+export type MoveDocumentInput = z.infer<typeof moveDocumentSchema>;
+export type RestoreDocumentInput = z.infer<typeof restoreDocumentSchema>;
+export type TrashQuery = z.infer<typeof trashQuerySchema>;
+export type RestoreTrashInput = z.infer<typeof restoreTrashSchema>;
+export type PurgeTrashInput = z.infer<typeof purgeTrashSchema>;
 
 export function validateExternalUrl(
   kind: CreateLinkInput["kind"],

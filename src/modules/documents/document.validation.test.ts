@@ -4,6 +4,10 @@ import { AppError } from "@/lib/errors/app-error";
 
 import {
   isPreviewableMimeType,
+  moveDocumentSchema,
+  purgeTrashSchema,
+  restoreTrashSchema,
+  updateDocumentSchema,
   validateExternalUrl,
   validateFile,
 } from "./document.validation";
@@ -104,5 +108,47 @@ describe("document link and preview validation", () => {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       ),
     ).toBe(false);
+  });
+});
+
+describe("Phase 5 document mutation validation", () => {
+  it("trims editable metadata and rejects unknown fields", () => {
+    expect(
+      updateDocumentSchema.parse({
+        title: "  Kế hoạch tuần 1  ",
+        description: "  Bản chính  ",
+      }),
+    ).toEqual({
+      title: "Kế hoạch tuần 1",
+      description: "Bản chính",
+    });
+    expect(
+      updateDocumentSchema.safeParse({
+        title: "Tài liệu",
+        description: "",
+        ownerUserId: "forged",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires UUID targets and limits restore/purge to document entities", () => {
+    expect(
+      moveDocumentSchema.safeParse({ targetFolderId: "not-a-uuid" }).success,
+    ).toBe(false);
+    expect(
+      restoreTrashSchema.safeParse({
+        items: [{ entityType: "FOLDER", entityId: crypto.randomUUID() }],
+      }).success,
+    ).toBe(false);
+    expect(
+      purgeTrashSchema.safeParse({
+        items: [
+          {
+            entityType: "DOCUMENT",
+            entityId: crypto.randomUUID(),
+          },
+        ],
+      }).success,
+    ).toBe(true);
   });
 });

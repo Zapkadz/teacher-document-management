@@ -16,6 +16,12 @@ import {
 } from "@/modules/permissions/permission.engine";
 
 import type { FolderActor } from "./folder.policy";
+import {
+  acquireFolderMutationLock,
+  assertFolderSubtreeUnlockedForMutation,
+  assertFolderUnlockedForMutation,
+  getEffectiveFolderLock,
+} from "./folder-lock.service";
 import { assertValidMoveTopology, getMaxFolderDepth } from "./folder-topology";
 import type {
   CreateFolderInput,
@@ -438,17 +444,19 @@ export async function getFolderDetails(id: string, actor: FolderActor) {
   const prisma = getPrismaClient();
   const folder = await findFolderForAccess(prisma, id, actor, true);
   const breadcrumbs = await getFolderPath(prisma, id);
-  const [effective, breadcrumbPermissions] = await Promise.all([
+  const [effective, breadcrumbPermissions, effectiveLock] = await Promise.all([
     getEffectivePermissions(actor, id, prisma),
     getEffectivePermissionsForFolders(
       actor,
       breadcrumbs.map((folder) => folder.id),
       prisma,
     ),
+    getEffectiveFolderLock(id, prisma),
   ]);
   const has = (permission: Permission) =>
     effective.permissions.includes(permission);
   const ownsFolder = folder.createdBy === actor.id;
+  const mutationLocked = actor.globalRole !== "ADMIN" && effectiveLock.isLocked;
 
   return {
     data: {
@@ -460,6 +468,7 @@ export async function getFolderDetails(id: string, actor: FolderActor) {
       inheritPermissions: folder.inheritPermissions,
       isLocked: folder.isLocked,
       lockDescendants: folder.lockDescendants,
+      effectiveLock,
       sortOrder: folder.sortOrder,
       createdBy: folder.createdBy,
       deletedAt: folder.deletedAt,
@@ -475,24 +484,31 @@ export async function getFolderDetails(id: string, actor: FolderActor) {
           name,
         })),
       capabilities: {
-        canUpload: folder.deletedAt === null && has("UPLOAD"),
+        canUpload:
+          folder.deletedAt === null && !mutationLocked && has("UPLOAD"),
         canCreateSubfolder:
-          folder.deletedAt === null && has("CREATE_SUBFOLDER"),
+          folder.deletedAt === null &&
+          !mutationLocked &&
+          has("CREATE_SUBFOLDER"),
         canRename:
           folder.deletedAt === null &&
+          !mutationLocked &&
           !isSystemRoot(folder) &&
           (has("EDIT_ANY") || (ownsFolder && has("EDIT_OWN"))),
         canMove:
           folder.deletedAt === null &&
+          !mutationLocked &&
           !isSystemRoot(folder) &&
           (has("MOVE_ANY") || (ownsFolder && has("MOVE_OWN"))),
         canDelete:
           folder.deletedAt === null &&
+          !mutationLocked &&
           !isSystemRoot(folder) &&
           (has("DELETE_ANY") || (ownsFolder && has("DELETE_OWN"))),
         canRestore:
           folder.deletedAt !== null && !isSystemRoot(folder) && has("RESTORE"),
         canManagePermissions: has("MANAGE_PERMISSIONS"),
+        canLockFolder: folder.deletedAt === null && has("LOCK_FOLDER"),
       },
     },
   };
@@ -507,6 +523,7 @@ export async function createFolder(
   try {
     return await prisma.$transaction(async (tx) => {
       await acquireTopologyLock(tx);
+      await acquireFolderMutationLock(tx);
       const parent = await findFolderForAccess(
         tx,
         input.parentId,
@@ -514,6 +531,7 @@ export async function createFolder(
         false,
         "CREATE_SUBFOLDER",
       );
+      await assertFolderUnlockedForMutation(actor, parent.id, tx);
 
       if (parent.workspaceType !== input.workspaceType) {
         throw new AppError(
@@ -584,6 +602,7 @@ export async function renameFolder(
 
   try {
     return await prisma.$transaction(async (tx) => {
+      await acquireFolderMutationLock(tx);
       const current = await findFolderForAccess(tx, id, actor);
       await assertFolderPermission(
         actor,
@@ -591,6 +610,7 @@ export async function renameFolder(
         current.createdBy === actor.id ? "EDIT_OWN" : "EDIT_ANY",
         tx,
       );
+      await assertFolderUnlockedForMutation(actor, current.id, tx);
       assertMutableFolder(current);
       await assertNameAvailable(tx, current.parentId!, name, current.id);
 
@@ -633,6 +653,7 @@ export async function moveFolder(
   try {
     return await prisma.$transaction(async (tx) => {
       await acquireTopologyLock(tx);
+      await acquireFolderMutationLock(tx);
       const source = await findFolderForAccess(tx, id, actor);
       await assertFolderPermission(
         actor,
@@ -640,6 +661,7 @@ export async function moveFolder(
         source.createdBy === actor.id ? "MOVE_OWN" : "MOVE_ANY",
         tx,
       );
+      await assertFolderSubtreeUnlockedForMutation(actor, source.id, tx);
       assertMutableFolder(source);
       const target = await findFolderForAccess(
         tx,
@@ -648,6 +670,7 @@ export async function moveFolder(
         false,
         "CREATE_SUBFOLDER",
       );
+      await assertFolderUnlockedForMutation(actor, target.id, tx);
       assertSameWorkspace(source, target);
 
       const targetPath = await getFolderPath(tx, target.id);
@@ -707,6 +730,7 @@ export async function softDeleteFolder(id: string, actor: FolderActor) {
 
   return prisma.$transaction(async (tx) => {
     await acquireTopologyLock(tx);
+    await acquireFolderMutationLock(tx);
     const folder = await findFolderForAccess(tx, id, actor);
     await assertFolderPermission(
       actor,
@@ -714,6 +738,7 @@ export async function softDeleteFolder(id: string, actor: FolderActor) {
       folder.createdBy === actor.id ? "DELETE_OWN" : "DELETE_ANY",
       tx,
     );
+    await assertFolderSubtreeUnlockedForMutation(actor, folder.id, tx);
     assertMutableFolder(folder);
     const deletionBatchId = randomUUID();
     const deletedAt = new Date();
@@ -775,6 +800,7 @@ export async function restoreFolder(id: string, actor: FolderActor) {
   try {
     return await prisma.$transaction(async (tx) => {
       await acquireTopologyLock(tx);
+      await acquireFolderMutationLock(tx);
       const folder = await findFolderForAccess(tx, id, actor, true, "RESTORE");
       assertMutableFolder(folder);
 
@@ -808,6 +834,7 @@ export async function restoreFolder(id: string, actor: FolderActor) {
           );
         }
 
+        await assertFolderUnlockedForMutation(actor, parent.id, tx);
         await assertNameAvailable(tx, parent.id, folder.name, folder.id);
       }
 

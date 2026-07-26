@@ -1,12 +1,14 @@
 # Kho hồ sơ giáo dục
 
 Web app nội bộ phục vụ lưu trữ và quản lý tài liệu giáo viên. Repository hiện
-hoàn thành **Phase 4**: nền tảng hệ thống, đăng nhập Google theo allowlist,
+hoàn thành **Phase 5**: nền tảng hệ thống, đăng nhập Google theo allowlist,
 quản trị người dùng, kho cá nhân và cây thư mục cá nhân/dùng chung với lazy
 loading, breadcrumbs, di chuyển, chống cycle, xóa mềm, khôi phục và permission
 engine có ACL trực tiếp/kế thừa cho người dùng hoặc nhóm. Hệ thống đã hỗ trợ
 upload file trực tiếp vào MinIO/S3, version 1, danh sách tài liệu, preview PDF/ảnh,
-download có kiểm tra quyền và liên kết Google Drive/YouTube.
+download có kiểm tra quyền và liên kết Google Drive/YouTube. Quyền ownership,
+khóa thư mục, sửa/di chuyển/xóa mềm tài liệu, thùng rác và khôi phục đã được áp
+dụng đồng nhất ở backend và giao diện.
 
 ## Yêu cầu
 
@@ -120,6 +122,8 @@ docker compose config --quiet
   bảo đảm mỗi grant chỉ trỏ tới đúng một principal.
 - Migration Phase 4 tạo documents, document versions và upload sessions dùng một
   lần. Constraint database bảo đảm metadata file/link nhất quán.
+- Phase 5 dùng các cột ownership, soft-delete và folder-lock đã có từ Phase 2/4,
+  vì vậy không cần migration schema mới.
 
 ## API Phase 1
 
@@ -177,8 +181,25 @@ breadcrumb có quyền `VIEW`. Mọi thay đổi ACL/kế thừa đều được
 
 Object key luôn dùng UUID theo workspace/folder/document/version, không dùng tên
 file làm định danh. Bucket không public. Backend kiểm tra extension, MIME, dung
-lượng và marker upload trước khi ghi database. Sửa, di chuyển, xóa và restore tài
-liệu vẫn thuộc Phase 5.
+lượng và marker upload trước khi ghi database.
+
+## API Phase 5
+
+- `PATCH /api/documents/:id`: sửa title/description theo `EDIT_OWN` hoặc
+  `EDIT_ANY`.
+- `POST /api/documents/:id/move`: yêu cầu quyền move ở nguồn và `UPLOAD` ở đích.
+- `DELETE /api/documents/:id`: xóa mềm, giữ nguyên object trong storage.
+- `POST /api/documents/:id/restore`: khôi phục về thư mục cũ hoặc thư mục đích.
+- `POST /api/folders/:id/lock`: khóa/mở khóa trực tiếp hoặc áp dụng cho toàn bộ
+  thư mục con.
+- `GET /api/trash`: danh sách tài liệu đã xóa trong phạm vi có `RESTORE`.
+- `POST /api/trash/restore`: khôi phục một batch tài liệu trong transaction.
+- `DELETE /api/trash/purge`: chỉ admin được xóa vĩnh viễn.
+
+Khóa thư mục không chặn xem, preview hoặc download, nhưng chặn người dùng thường
+upload, tạo/sửa/di chuyển/xóa thư mục và tài liệu. Admin bypass khóa để xử lý sự
+cố và luôn có thể mở khóa. Khóa kế thừa chỉ có hiệu lực khi thư mục nguồn bật
+`lockDescendants`.
 
 Muốn dừng container mà vẫn giữ dữ liệu:
 

@@ -12,6 +12,14 @@ type DocumentItem = {
   sizeBytes: number | null;
   externalUrl: string | null;
   createdAt: string;
+  deletedAt: string | null;
+  folder: {
+    id: string;
+    name: string;
+    workspaceType: "PERSONAL" | "SHARED";
+    deletedAt: string | null;
+  };
+  requiresTargetFolder?: boolean;
   owner: { id: string; name: string | null; email: string };
   currentVersion: {
     id: string;
@@ -22,6 +30,11 @@ type DocumentItem = {
     canDownload: boolean;
     canPreview: boolean;
     canOpenLink: boolean;
+    canEdit: boolean;
+    canMove: boolean;
+    canDelete: boolean;
+    canRestore: boolean;
+    canPurge: boolean;
   };
 };
 
@@ -95,11 +108,19 @@ function kindLabel(kind: DocumentItem["documentKind"]) {
 export function DocumentPanel({
   folderId,
   canUpload,
+  moveTargets = [],
+  isAdmin = false,
 }: {
   folderId: string;
   canUpload: boolean;
+  moveTargets?: Array<{ id: string; name: string }>;
+  isAdmin?: boolean;
 }) {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [trashDocuments, setTrashDocuments] = useState<DocumentItem[]>([]);
+  const [showTrash, setShowTrash] = useState(false);
+  const [movingDocumentId, setMovingDocumentId] = useState<string | null>(null);
+  const [moveTargetId, setMoveTargetId] = useState("");
   const [staged, setStaged] = useState<StagedFile[]>([]);
   const [showUpload, setShowUpload] = useState(false);
   const [showLink, setShowLink] = useState(false);
@@ -135,6 +156,17 @@ export function DocumentPanel({
       `/api/folders/${folderId}/documents`,
     );
     setDocuments(body.data);
+  }
+
+  async function loadTrash() {
+    const query = new URLSearchParams({
+      entityType: "DOCUMENT",
+      folderId,
+    });
+    const body = await requestJson<{ data: DocumentItem[] }>(
+      `/api/trash?${query.toString()}`,
+    );
+    setTrashDocuments(body.data);
   }
 
   useEffect(() => {
@@ -307,39 +339,186 @@ export function DocumentPanel({
     }
   }
 
+  async function editDocument(document: DocumentItem) {
+    const title = window.prompt("Tên tài liệu:", document.title);
+    if (!title) return;
+    const description = window.prompt(
+      "Mô tả tài liệu:",
+      document.description ?? "",
+    );
+    if (description === null) return;
+
+    setBusy(true);
+    try {
+      await requestJson(`/api/documents/${document.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, description }),
+      });
+      await loadDocuments();
+      setMessage("Đã cập nhật tài liệu.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Không thể cập nhật");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function moveDocument(document: DocumentItem) {
+    if (!moveTargetId) return;
+    setBusy(true);
+    try {
+      await requestJson(`/api/documents/${document.id}/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetFolderId: moveTargetId }),
+      });
+      setMovingDocumentId(null);
+      setMoveTargetId("");
+      await loadDocuments();
+      setMessage("Đã di chuyển tài liệu.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Không thể di chuyển tài liệu",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteDocument(document: DocumentItem) {
+    if (
+      !window.confirm(
+        `Chuyển “${document.title}” vào thùng rác? File vật lý chưa bị xóa.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await requestJson(`/api/documents/${document.id}`, { method: "DELETE" });
+      await loadDocuments();
+      setMessage("Đã chuyển tài liệu vào thùng rác.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Không thể xóa");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreDocument(document: DocumentItem) {
+    setBusy(true);
+    try {
+      await requestJson(`/api/documents/${document.id}/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      await Promise.all([loadTrash(), loadDocuments()]);
+      setMessage("Đã khôi phục tài liệu.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Không thể khôi phục",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function purgeDocument(document: DocumentItem) {
+    if (
+      !window.confirm(
+        `Xóa vĩnh viễn “${document.title}”? Thao tác này không thể hoàn tác.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await requestJson("/api/trash/purge", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: [{ entityType: "DOCUMENT", entityId: document.id }],
+        }),
+      });
+      await loadTrash();
+      setMessage("Đã xóa vĩnh viễn tài liệu.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Không thể xóa vĩnh viễn",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleTrash() {
+    if (showTrash) {
+      setShowTrash(false);
+      return;
+    }
+    setBusy(true);
+    try {
+      await loadTrash();
+      setShowTrash(true);
+      setShowUpload(false);
+      setShowLink(false);
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Không thể tải thùng rác",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const displayedDocuments = showTrash ? trashDocuments : documents;
+
   return (
     <section className="mt-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 className="font-semibold text-slate-900">Tài liệu</h3>
           <p className="mt-1 text-sm text-slate-500">
-            {documents.length} tài liệu trong trang hiện tại
+            {displayedDocuments.length}{" "}
+            {showTrash ? "tài liệu đã xóa" : "tài liệu trong trang hiện tại"}
           </p>
         </div>
-        {canUpload ? (
-          <div className="flex flex-wrap gap-2">
-            <button
-              className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"
-              onClick={() => {
-                setShowUpload((current) => !current);
-                setShowLink(false);
-              }}
-              type="button"
-            >
-              Tải file lên
-            </button>
-            <button
-              className="rounded-lg border border-emerald-300 px-4 py-2 text-sm font-semibold text-emerald-800"
-              onClick={() => {
-                setShowLink((current) => !current);
-                setShowUpload(false);
-              }}
-              type="button"
-            >
-              Thêm liên kết
-            </button>
-          </div>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
+            disabled={busy}
+            onClick={toggleTrash}
+            type="button"
+          >
+            {showTrash ? "Đóng thùng rác" : "Tài liệu đã xóa"}
+          </button>
+          {canUpload && !showTrash ? (
+            <>
+              <button
+                className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"
+                onClick={() => {
+                  setShowUpload((current) => !current);
+                  setShowLink(false);
+                }}
+                type="button"
+              >
+                Tải file lên
+              </button>
+              <button
+                className="rounded-lg border border-emerald-300 px-4 py-2 text-sm font-semibold text-emerald-800"
+                onClick={() => {
+                  setShowLink((current) => !current);
+                  setShowUpload(false);
+                }}
+                type="button"
+              >
+                Thêm liên kết
+              </button>
+            </>
+          ) : null}
+        </div>
       </div>
 
       {message ? (
@@ -348,7 +527,7 @@ export function DocumentPanel({
         </p>
       ) : null}
 
-      {showUpload ? (
+      {showUpload && !showTrash ? (
         <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4">
           <label className="grid cursor-pointer place-items-center rounded-xl border-2 border-dashed border-emerald-300 bg-white p-8 text-center">
             <span className="font-semibold text-emerald-800">
@@ -432,7 +611,7 @@ export function DocumentPanel({
         </div>
       ) : null}
 
-      {showLink ? (
+      {showLink && !showTrash ? (
         <div className="mt-4 grid gap-4 rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 sm:grid-cols-2">
           <label className="grid gap-2 text-sm font-medium">
             Nguồn
@@ -492,16 +671,20 @@ export function DocumentPanel({
         </div>
       ) : null}
 
-      {documents.length === 0 ? (
+      {displayedDocuments.length === 0 ? (
         <div className="mt-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
           <p className="font-medium text-slate-700">
-            Thư mục này chưa có tài liệu.
+            {showTrash
+              ? "Thùng rác tài liệu của thư mục đang trống."
+              : "Thư mục này chưa có tài liệu."}
           </p>
-          <p className="mt-2 text-sm text-slate-500">
-            {canUpload
-              ? "Tải file hoặc thêm liên kết để bắt đầu."
-              : "Bạn có quyền xem nhưng chưa có quyền tải nội dung lên."}
-          </p>
+          {!showTrash ? (
+            <p className="mt-2 text-sm text-slate-500">
+              {canUpload
+                ? "Tải file hoặc thêm liên kết để bắt đầu."
+                : "Bạn có quyền xem nhưng chưa có quyền tải nội dung lên."}
+            </p>
+          ) : null}
         </div>
       ) : (
         <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200">
@@ -517,7 +700,7 @@ export function DocumentPanel({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {documents.map((document) => (
+              {displayedDocuments.map((document) => (
                 <tr key={document.id}>
                   <td className="px-4 py-3">
                     <p className="font-medium text-slate-900">
@@ -543,7 +726,7 @@ export function DocumentPanel({
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
-                      {document.capabilities.canPreview ? (
+                      {!showTrash && document.capabilities.canPreview ? (
                         <button
                           className="font-medium text-emerald-700"
                           onClick={() => openSignedUrl(document, "preview")}
@@ -552,7 +735,7 @@ export function DocumentPanel({
                           Xem trước
                         </button>
                       ) : null}
-                      {document.capabilities.canDownload ? (
+                      {!showTrash && document.capabilities.canDownload ? (
                         <button
                           className="font-medium text-emerald-700"
                           onClick={() => openSignedUrl(document, "download")}
@@ -561,7 +744,8 @@ export function DocumentPanel({
                           Tải xuống
                         </button>
                       ) : null}
-                      {document.capabilities.canOpenLink &&
+                      {!showTrash &&
+                      document.capabilities.canOpenLink &&
                       document.externalUrl ? (
                         <a
                           className="font-medium text-emerald-700"
@@ -572,7 +756,93 @@ export function DocumentPanel({
                           Mở liên kết
                         </a>
                       ) : null}
+                      {!showTrash && document.capabilities.canEdit ? (
+                        <button
+                          className="font-medium text-sky-700"
+                          disabled={busy}
+                          onClick={() => editDocument(document)}
+                          type="button"
+                        >
+                          Sửa
+                        </button>
+                      ) : null}
+                      {!showTrash && document.capabilities.canMove ? (
+                        <button
+                          className="font-medium text-amber-700"
+                          disabled={busy}
+                          onClick={() => {
+                            setMovingDocumentId(document.id);
+                            setMoveTargetId("");
+                          }}
+                          type="button"
+                        >
+                          Di chuyển
+                        </button>
+                      ) : null}
+                      {!showTrash && document.capabilities.canDelete ? (
+                        <button
+                          className="font-medium text-red-700"
+                          disabled={busy}
+                          onClick={() => deleteDocument(document)}
+                          type="button"
+                        >
+                          Xóa
+                        </button>
+                      ) : null}
+                      {showTrash && document.capabilities.canRestore ? (
+                        <button
+                          className="font-medium text-emerald-700"
+                          disabled={busy || document.requiresTargetFolder}
+                          onClick={() => restoreDocument(document)}
+                          title={
+                            document.requiresTargetFolder
+                              ? "Cần mở một thư mục đích còn hoạt động để khôi phục"
+                              : undefined
+                          }
+                          type="button"
+                        >
+                          Khôi phục
+                        </button>
+                      ) : null}
+                      {showTrash &&
+                      isAdmin &&
+                      document.capabilities.canPurge ? (
+                        <button
+                          className="font-medium text-red-700"
+                          disabled={busy}
+                          onClick={() => purgeDocument(document)}
+                          type="button"
+                        >
+                          Xóa vĩnh viễn
+                        </button>
+                      ) : null}
                     </div>
+                    {!showTrash && movingDocumentId === document.id ? (
+                      <div className="mt-3 flex min-w-64 gap-2">
+                        <select
+                          className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                          onChange={(event) =>
+                            setMoveTargetId(event.target.value)
+                          }
+                          value={moveTargetId}
+                        >
+                          <option value="">Chọn thư mục đích</option>
+                          {moveTargets.map((target) => (
+                            <option key={target.id} value={target.id}>
+                              {target.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          className="text-xs font-semibold text-amber-700"
+                          disabled={busy || !moveTargetId}
+                          onClick={() => moveDocument(document)}
+                          type="button"
+                        >
+                          Xác nhận
+                        </button>
+                      </div>
+                    ) : null}
                   </td>
                 </tr>
               ))}

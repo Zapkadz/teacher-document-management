@@ -1,12 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-import type { Prisma } from "@/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { getPrismaClient } from "@/lib/db/prisma";
 import { AppError } from "@/lib/errors/app-error";
+import {
+  acquireFolderMutationLock,
+  assertFolderUnlockedForMutation,
+  getEffectiveFolderLock,
+} from "@/modules/folders/folder-lock.service";
 import {
   type PermissionActor,
   assertFolderPermission,
   getEffectivePermissions,
+  getEffectivePermissionsForFolders,
 } from "@/modules/permissions/permission.engine";
 import {
   createPresignedDownload,
@@ -18,12 +24,24 @@ import {
 import {
   type CreateLinkInput,
   type ListDocumentsQuery,
+  type MoveDocumentInput,
+  type PurgeTrashInput,
+  type RestoreDocumentInput,
+  type RestoreTrashInput,
+  type TrashQuery,
+  type UpdateDocumentInput,
   type UploadCompleteInput,
   type UploadInitInput,
   isPreviewableMimeType,
   validateExternalUrl,
   validateFile,
 } from "./document.validation";
+import {
+  assertDocumentMutationPermission,
+  canMutateDocument,
+} from "./document.policy";
+
+type DatabaseClient = PrismaClient | Prisma.TransactionClient;
 
 const documentSelect = {
   id: true,
@@ -42,6 +60,15 @@ const documentSelect = {
   createdAt: true,
   updatedAt: true,
   owner: { select: { id: true, name: true, email: true } },
+  folder: {
+    select: {
+      id: true,
+      name: true,
+      workspaceType: true,
+      ownerUserId: true,
+      deletedAt: true,
+    },
+  },
   currentVersion: {
     select: { id: true, versionNumber: true, createdAt: true },
   },
@@ -56,6 +83,11 @@ function toDocumentDto(
   capabilities: {
     canDownload: boolean;
     canPreview: boolean;
+    canEdit: boolean;
+    canMove: boolean;
+    canDelete: boolean;
+    canRestore?: boolean;
+    canPurge?: boolean;
   },
 ) {
   return {
@@ -67,17 +99,28 @@ function toDocumentDto(
         document.documentKind === "FILE" &&
         capabilities.canPreview &&
         isPreviewableMimeType(document.mimeType),
-      canOpenLink: document.documentKind !== "FILE",
+      canOpenLink:
+        document.deletedAt === null && document.documentKind !== "FILE",
+      canEdit: capabilities.canEdit,
+      canMove: capabilities.canMove,
+      canDelete: capabilities.canDelete,
+      canRestore: capabilities.canRestore ?? false,
+      canPurge: capabilities.canPurge ?? false,
     },
   };
 }
 
 async function assertActiveFolder(
   folderId: string,
-): Promise<{ id: string; workspaceType: "PERSONAL" | "SHARED" }> {
-  const folder = await getPrismaClient().folder.findFirst({
+  database: DatabaseClient = getPrismaClient(),
+): Promise<{
+  id: string;
+  workspaceType: "PERSONAL" | "SHARED";
+  ownerUserId: string | null;
+}> {
+  const folder = await database.folder.findFirst({
     where: { id: folderId, deletedAt: null },
-    select: { id: true, workspaceType: true },
+    select: { id: true, workspaceType: true, ownerUserId: true },
   });
   if (!folder) {
     throw new AppError("NOT_FOUND", "Không tìm thấy thư mục", 404);
@@ -85,8 +128,11 @@ async function assertActiveFolder(
   return folder;
 }
 
-async function findActiveDocument(id: string) {
-  const document = await getPrismaClient().document.findFirst({
+async function findActiveDocument(
+  id: string,
+  database: DatabaseClient = getPrismaClient(),
+) {
+  const document = await database.document.findFirst({
     where: {
       id,
       deletedAt: null,
@@ -104,11 +150,30 @@ async function findActiveDocument(id: string) {
   return document;
 }
 
-function documentCapabilities(permissions: readonly string[]) {
+function documentCapabilities(
+  document: Pick<DocumentRecord, "ownerUserId" | "deletedAt">,
+  actor: PermissionActor,
+  permissions: readonly string[],
+  isLocked = false,
+) {
+  const active = document.deletedAt === null;
+  const canMutate = active && (actor.globalRole === "ADMIN" || !isLocked);
   return {
     canDownload:
-      permissions.includes("VIEW") && permissions.includes("DOWNLOAD"),
-    canPreview: permissions.includes("VIEW") && permissions.includes("PREVIEW"),
+      active &&
+      permissions.includes("VIEW") &&
+      permissions.includes("DOWNLOAD"),
+    canPreview:
+      active && permissions.includes("VIEW") && permissions.includes("PREVIEW"),
+    canEdit:
+      canMutate &&
+      canMutateDocument("EDIT", actor.id, document.ownerUserId, permissions),
+    canMove:
+      canMutate &&
+      canMutateDocument("MOVE", actor.id, document.ownerUserId, permissions),
+    canDelete:
+      canMutate &&
+      canMutateDocument("DELETE", actor.id, document.ownerUserId, permissions),
   };
 }
 
@@ -118,7 +183,10 @@ export async function listDocuments(
   actor: PermissionActor,
 ) {
   await assertActiveFolder(folderId);
-  const effective = await assertFolderPermission(actor, folderId, "VIEW");
+  const [effective, lock] = await Promise.all([
+    assertFolderPermission(actor, folderId, "VIEW"),
+    getEffectiveFolderLock(folderId),
+  ]);
   const skip = (query.page - 1) * query.limit;
   const where: Prisma.DocumentWhereInput = {
     folderId,
@@ -161,10 +229,19 @@ export async function listDocuments(
     }),
     prisma.document.count({ where }),
   ]);
-  const capabilities = documentCapabilities(effective.permissions);
 
   return {
-    data: documents.map((document) => toDocumentDto(document, capabilities)),
+    data: documents.map((document) =>
+      toDocumentDto(
+        document,
+        documentCapabilities(
+          document,
+          actor,
+          effective.permissions,
+          lock.isLocked,
+        ),
+      ),
+    ),
     pagination: {
       page: query.page,
       limit: query.limit,
@@ -181,6 +258,7 @@ export async function initializeUpload(
   const file = validateFile(input);
   const folder = await assertActiveFolder(input.folderId);
   await assertFolderPermission(actor, folder.id, "UPLOAD");
+  await assertFolderUnlockedForMutation(actor, folder.id);
 
   const uploadId = randomUUID();
   const documentId = randomUUID();
@@ -276,6 +354,7 @@ export async function completeUpload(
 
   await assertActiveFolder(upload.folderId);
   await assertFolderPermission(actor, upload.folderId, "UPLOAD");
+  await assertFolderUnlockedForMutation(actor, upload.folderId);
 
   let object;
   try {
@@ -306,6 +385,10 @@ export async function completeUpload(
 
   try {
     return await prisma.$transaction(async (tx) => {
+      await acquireFolderMutationLock(tx);
+      await assertActiveFolder(upload.folderId, tx);
+      await assertFolderPermission(actor, upload.folderId, "UPLOAD", tx);
+      await assertFolderUnlockedForMutation(actor, upload.folderId, tx);
       const claimed = await tx.uploadSession.updateMany({
         where: {
           id: upload.id,
@@ -379,7 +462,7 @@ export async function completeUpload(
       return {
         data: toDocumentDto(
           document,
-          documentCapabilities(effective.permissions),
+          documentCapabilities(document, actor, effective.permissions),
         ),
       };
     });
@@ -400,17 +483,23 @@ export async function createLinkDocument(
   actor: PermissionActor,
 ) {
   await assertActiveFolder(input.folderId);
-  const effective = await assertFolderPermission(
-    actor,
-    input.folderId,
-    "UPLOAD",
-  );
+  await assertFolderPermission(actor, input.folderId, "UPLOAD");
+  await assertFolderUnlockedForMutation(actor, input.folderId);
   const externalUrl = validateExternalUrl(input.kind, input.externalUrl);
   const documentId = randomUUID();
   const versionId = randomUUID();
   const prisma = getPrismaClient();
 
   return prisma.$transaction(async (tx) => {
+    await acquireFolderMutationLock(tx);
+    await assertActiveFolder(input.folderId, tx);
+    const effective = await assertFolderPermission(
+      actor,
+      input.folderId,
+      "UPLOAD",
+      tx,
+    );
+    await assertFolderUnlockedForMutation(actor, input.folderId, tx);
     await tx.document.create({
       data: {
         id: documentId,
@@ -453,7 +542,7 @@ export async function createLinkDocument(
     return {
       data: toDocumentDto(
         document,
-        documentCapabilities(effective.permissions),
+        documentCapabilities(document, actor, effective.permissions),
       ),
     };
   });
@@ -466,8 +555,448 @@ export async function getDocument(id: string, actor: PermissionActor) {
     document.folderId,
     "VIEW",
   );
+  const lock = await getEffectiveFolderLock(document.folderId);
   return {
-    data: toDocumentDto(document, documentCapabilities(effective.permissions)),
+    data: toDocumentDto(
+      document,
+      documentCapabilities(
+        document,
+        actor,
+        effective.permissions,
+        lock.isLocked,
+      ),
+    ),
+  };
+}
+
+export async function updateDocument(
+  id: string,
+  input: UpdateDocumentInput,
+  actor: PermissionActor,
+) {
+  const prisma = getPrismaClient();
+
+  return prisma.$transaction(async (tx) => {
+    await acquireFolderMutationLock(tx);
+    const document = await findActiveDocument(id, tx);
+    const effective = await assertDocumentMutationPermission(
+      "EDIT",
+      actor,
+      document.folderId,
+      document.ownerUserId,
+      tx,
+    );
+    await assertFolderUnlockedForMutation(actor, document.folderId, tx);
+
+    const updated = await tx.document.update({
+      where: { id: document.id },
+      data: {
+        title: input.title,
+        description: input.description || null,
+      },
+      select: documentSelect,
+    });
+
+    if (
+      document.title !== updated.title ||
+      document.description !== updated.description
+    ) {
+      await tx.auditLog.create({
+        data: {
+          actorUserId: actor.id,
+          action: "DOCUMENT_UPDATED",
+          entityType: "DOCUMENT",
+          entityId: document.id,
+          folderId: document.folderId,
+          metadata: {
+            before: {
+              title: document.title,
+              description: document.description,
+            },
+            after: {
+              title: updated.title,
+              description: updated.description,
+            },
+          },
+        },
+      });
+    }
+
+    return {
+      data: toDocumentDto(
+        updated,
+        documentCapabilities(updated, actor, effective.permissions),
+      ),
+    };
+  });
+}
+
+export async function moveDocument(
+  id: string,
+  input: MoveDocumentInput,
+  actor: PermissionActor,
+) {
+  const prisma = getPrismaClient();
+
+  return prisma.$transaction(async (tx) => {
+    await acquireFolderMutationLock(tx);
+    const document = await findActiveDocument(id, tx);
+    await assertDocumentMutationPermission(
+      "MOVE",
+      actor,
+      document.folderId,
+      document.ownerUserId,
+      tx,
+    );
+    await assertFolderUnlockedForMutation(actor, document.folderId, tx);
+
+    const target = await assertActiveFolder(input.targetFolderId, tx);
+    const targetPermissions = await assertFolderPermission(
+      actor,
+      target.id,
+      "UPLOAD",
+      tx,
+    );
+    await assertFolderUnlockedForMutation(actor, target.id, tx);
+
+    if (document.folderId === target.id) {
+      return {
+        data: toDocumentDto(
+          document,
+          documentCapabilities(document, actor, targetPermissions.permissions),
+        ),
+      };
+    }
+
+    const updated = await tx.document.update({
+      where: { id: document.id },
+      data: { folderId: target.id },
+      select: documentSelect,
+    });
+    await tx.auditLog.create({
+      data: {
+        actorUserId: actor.id,
+        action: "DOCUMENT_MOVED",
+        entityType: "DOCUMENT",
+        entityId: document.id,
+        folderId: target.id,
+        metadata: {
+          fromFolderId: document.folderId,
+          toFolderId: target.id,
+        },
+      },
+    });
+
+    return {
+      data: toDocumentDto(
+        updated,
+        documentCapabilities(updated, actor, targetPermissions.permissions),
+      ),
+    };
+  });
+}
+
+export async function softDeleteDocument(id: string, actor: PermissionActor) {
+  const prisma = getPrismaClient();
+
+  return prisma.$transaction(async (tx) => {
+    await acquireFolderMutationLock(tx);
+    const document = await findActiveDocument(id, tx);
+    await assertDocumentMutationPermission(
+      "DELETE",
+      actor,
+      document.folderId,
+      document.ownerUserId,
+      tx,
+    );
+    await assertFolderUnlockedForMutation(actor, document.folderId, tx);
+
+    const deletedAt = new Date();
+    await tx.document.update({
+      where: { id: document.id },
+      data: {
+        deletedAt,
+        deletedBy: actor.id,
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorUserId: actor.id,
+        action: "DOCUMENT_DELETED",
+        entityType: "DOCUMENT",
+        entityId: document.id,
+        folderId: document.folderId,
+        metadata: {
+          title: document.title,
+          documentKind: document.documentKind,
+          storageObjectRetained: true,
+        },
+      },
+    });
+
+    return {
+      data: {
+        id: document.id,
+        deletedAt,
+      },
+    };
+  });
+}
+
+async function restoreDeletedDocument(
+  transaction: Prisma.TransactionClient,
+  id: string,
+  input: RestoreDocumentInput,
+  actor: PermissionActor,
+) {
+  const document = await transaction.document.findUnique({
+    where: { id },
+    select: documentSelect,
+  });
+  if (!document) {
+    throw new AppError("DOCUMENT_NOT_FOUND", "Không tìm thấy tài liệu", 404);
+  }
+  if (!document.deletedAt) {
+    throw new AppError("DOCUMENT_NOT_DELETED", "Tài liệu chưa bị xóa", 409);
+  }
+
+  await assertFolderPermission(
+    actor,
+    document.folderId,
+    "RESTORE",
+    transaction,
+  );
+
+  const targetFolderId =
+    input.targetFolderId ??
+    (document.folder.deletedAt === null ? document.folderId : null);
+  if (!targetFolderId) {
+    throw new AppError(
+      "RESTORE_TARGET_REQUIRED",
+      "Thư mục gốc không còn hoạt động; hãy chọn thư mục đích",
+      409,
+    );
+  }
+
+  await assertActiveFolder(targetFolderId, transaction);
+  const targetPermissions = await assertFolderPermission(
+    actor,
+    targetFolderId,
+    "RESTORE",
+    transaction,
+  );
+  await assertFolderUnlockedForMutation(actor, targetFolderId, transaction);
+
+  const restored = await transaction.document.update({
+    where: { id: document.id },
+    data: {
+      folderId: targetFolderId,
+      deletedAt: null,
+      deletedBy: null,
+    },
+    select: documentSelect,
+  });
+  await transaction.auditLog.create({
+    data: {
+      actorUserId: actor.id,
+      action: "DOCUMENT_RESTORED",
+      entityType: "DOCUMENT",
+      entityId: document.id,
+      folderId: targetFolderId,
+      metadata: {
+        originalFolderId: document.folderId,
+        restoredFolderId: targetFolderId,
+      },
+    },
+  });
+
+  return toDocumentDto(
+    restored,
+    documentCapabilities(restored, actor, targetPermissions.permissions),
+  );
+}
+
+export async function restoreDocument(
+  id: string,
+  input: RestoreDocumentInput,
+  actor: PermissionActor,
+) {
+  return getPrismaClient().$transaction(async (tx) => {
+    await acquireFolderMutationLock(tx);
+    return {
+      data: await restoreDeletedDocument(tx, id, input, actor),
+    };
+  });
+}
+
+export async function listTrash(query: TrashQuery, actor: PermissionActor) {
+  const prisma = getPrismaClient();
+  const documents = await prisma.document.findMany({
+    where: {
+      deletedAt: {
+        not: null,
+        gte: query.from,
+        lte: query.to,
+      },
+      deletedBy: query.deletedBy,
+      folderId: query.folderId,
+      folder: query.workspace ? { workspaceType: query.workspace } : undefined,
+    },
+    select: documentSelect,
+    orderBy: [{ deletedAt: "desc" }, { id: "asc" }],
+  });
+  const folderIds = [...new Set(documents.map(({ folderId }) => folderId))];
+  const permissions = await getEffectivePermissionsForFolders(
+    actor,
+    folderIds,
+    prisma,
+  );
+  const visible = documents.filter((document) =>
+    permissions.get(document.folderId)?.permissions.includes("RESTORE"),
+  );
+  const skip = (query.page - 1) * query.limit;
+  const page = visible.slice(skip, skip + query.limit);
+  const lockEntries = await Promise.all(
+    [...new Set(page.map(({ folderId }) => folderId))].map(
+      async (folderId) =>
+        [folderId, await getEffectiveFolderLock(folderId, prisma)] as const,
+    ),
+  );
+  const locks = new Map(lockEntries);
+
+  return {
+    data: page.map((document) => {
+      const effective = permissions.get(document.folderId)!;
+      const sourceLocked = locks.get(document.folderId)?.isLocked ?? false;
+      return {
+        ...toDocumentDto(document, {
+          ...documentCapabilities(
+            document,
+            actor,
+            effective.permissions,
+            sourceLocked,
+          ),
+          canRestore:
+            document.folder.deletedAt !== null ||
+            actor.globalRole === "ADMIN" ||
+            !sourceLocked,
+          canPurge: actor.globalRole === "ADMIN",
+        }),
+        requiresTargetFolder: document.folder.deletedAt !== null,
+      };
+    }),
+    pagination: {
+      page: query.page,
+      limit: query.limit,
+      total: visible.length,
+      totalPages: Math.ceil(visible.length / query.limit),
+    },
+  };
+}
+
+export async function restoreTrashItems(
+  input: RestoreTrashInput,
+  actor: PermissionActor,
+) {
+  return getPrismaClient().$transaction(async (tx) => {
+    await acquireFolderMutationLock(tx);
+    const restored = [];
+    for (const item of input.items) {
+      restored.push(
+        await restoreDeletedDocument(
+          tx,
+          item.entityId,
+          { targetFolderId: item.targetFolderId },
+          actor,
+        ),
+      );
+    }
+    return { data: restored };
+  });
+}
+
+export async function purgeTrashItems(
+  input: PurgeTrashInput,
+  actor: PermissionActor,
+) {
+  if (actor.globalRole !== "ADMIN") {
+    throw new AppError(
+      "FORBIDDEN",
+      "Chỉ quản trị viên được xóa vĩnh viễn",
+      403,
+    );
+  }
+
+  const ids = [...new Set(input.items.map(({ entityId }) => entityId))];
+  const prisma = getPrismaClient();
+  const documents = await prisma.document.findMany({
+    where: { id: { in: ids }, deletedAt: { not: null } },
+    select: {
+      id: true,
+      folderId: true,
+      title: true,
+      versions: { select: { storageKey: true } },
+    },
+  });
+  if (documents.length !== ids.length) {
+    throw new AppError(
+      "DOCUMENT_NOT_FOUND",
+      "Một hoặc nhiều tài liệu không tồn tại trong thùng rác",
+      404,
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await acquireFolderMutationLock(tx);
+    await tx.uploadSession.deleteMany({
+      where: { documentId: { in: ids } },
+    });
+    await tx.document.updateMany({
+      where: { id: { in: ids }, deletedAt: { not: null } },
+      data: { currentVersionId: null },
+    });
+    const deleted = await tx.document.deleteMany({
+      where: { id: { in: ids }, deletedAt: { not: null } },
+    });
+    if (deleted.count !== documents.length) {
+      throw new AppError(
+        "DOCUMENT_NOT_FOUND",
+        "Một hoặc nhiều tài liệu không còn trong thùng rác",
+        409,
+      );
+    }
+    for (const document of documents) {
+      await tx.auditLog.create({
+        data: {
+          actorUserId: actor.id,
+          action: "DOCUMENT_PURGED",
+          entityType: "DOCUMENT",
+          entityId: document.id,
+          folderId: document.folderId,
+          metadata: { title: document.title },
+        },
+      });
+    }
+  });
+
+  const storageKeys = [
+    ...new Set(
+      documents.flatMap(({ versions }) =>
+        versions.flatMap(({ storageKey }) => (storageKey ? [storageKey] : [])),
+      ),
+    ),
+  ];
+  const cleanup = await Promise.allSettled(
+    storageKeys.map((storageKey) => deleteStoredObject(storageKey)),
+  );
+
+  return {
+    data: {
+      purged: documents.length,
+      storageCleanupFailures: cleanup.filter(
+        (result) => result.status === "rejected",
+      ).length,
+    },
   };
 }
 
