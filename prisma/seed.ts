@@ -59,6 +59,37 @@ async function main() {
       });
     }
 
+    const sharedRoot = await tx.folder.findFirst({
+      where: {
+        workspaceType: "SHARED",
+        parentId: null,
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (!sharedRoot) {
+      const root = await tx.folder.create({
+        data: {
+          name: "Kho dùng chung",
+          workspaceType: "SHARED",
+          createdBy: admin.id,
+        },
+        select: { id: true },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "SHARED_ROOT_CREATED",
+          actorUserId: admin.id,
+          entityType: "FOLDER",
+          entityId: root.id,
+          folderId: root.id,
+          metadata: { name: "Kho dùng chung" },
+        },
+      });
+    }
+
     await tx.auditLog.create({
       data: {
         action: "INITIAL_ADMIN_SEEDED",

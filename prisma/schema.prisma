@@ -112,6 +112,7 @@ model Folder {
   createdBy          String        @map("created_by") @db.Uuid
   deletedAt          DateTime?     @map("deleted_at")
   deletedBy          String?       @map("deleted_by") @db.Uuid
+  deletionBatchId    String?       @map("deletion_batch_id") @db.Uuid
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
 
@@ -124,6 +125,7 @@ model Folder {
 
   @@index([parentId, deletedAt])
   @@index([ownerUserId, workspaceType])
+  @@index([deletionBatchId])
   @@map("folders")
 }
 
