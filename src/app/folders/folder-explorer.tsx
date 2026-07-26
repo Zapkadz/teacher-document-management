@@ -26,7 +26,8 @@ type TreeNode = {
   isSystemRoot: boolean;
 };
 
-type FolderDetails = TreeNode & {
+export type FolderDetails = Omit<TreeNode, "hasChildren"> & {
+  hasChildren?: boolean;
   inheritPermissions: boolean;
   lockDescendants: boolean;
   createdBy: string;
@@ -171,19 +172,25 @@ export function FolderExplorer({
   currentUserId,
   isAdmin,
   owners,
+  initialFolder = null,
 }: {
   currentUserId: string;
   isAdmin: boolean;
   owners: OwnerOption[];
+  initialFolder?: FolderDetails | null;
 }) {
-  const [workspace, setWorkspace] = useState<Workspace>("PERSONAL");
-  const [ownerUserId, setOwnerUserId] = useState(currentUserId);
+  const [workspace, setWorkspace] = useState<Workspace>(
+    initialFolder?.workspaceType ?? "PERSONAL",
+  );
+  const [ownerUserId, setOwnerUserId] = useState(
+    initialFolder?.ownerUserId ?? currentUserId,
+  );
   const [roots, setRoots] = useState<TreeNode[]>([]);
   const [childrenByParent, setChildrenByParent] = useState<
     Record<string, TreeNode[]>
   >({});
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const [selected, setSelected] = useState<FolderDetails | null>(null);
+  const [selected, setSelected] = useState<FolderDetails | null>(initialFolder);
   const [trash, setTrash] = useState<TreeNode[]>([]);
   const [showTrash, setShowTrash] = useState(false);
   const [moveMode, setMoveMode] = useState(false);
@@ -215,7 +222,13 @@ export function FolderExplorer({
     async function loadRoot() {
       setBusy(true);
       setMessage(null);
-      setSelected(null);
+      setSelected((current) =>
+        current &&
+        current.workspaceType === workspace &&
+        (workspace === "SHARED" || current.ownerUserId === ownerUserId)
+          ? current
+          : null,
+      );
       setChildrenByParent({});
       setExpandedIds(new Set());
       setShowTrash(false);
@@ -299,7 +312,7 @@ export function FolderExplorer({
     }
   }
 
-  async function selectNode(node: TreeNode) {
+  async function selectNode(node: Pick<TreeNode, "id">) {
     setMessage(null);
     try {
       const body = await requestJson<{ data: FolderDetails }>(
@@ -581,13 +594,7 @@ export function FolderExplorer({
                     {index > 0 ? <span aria-hidden="true">/</span> : null}
                     <button
                       className="hover:text-emerald-800 hover:underline"
-                      onClick={() =>
-                        selectNode({
-                          ...selected,
-                          id: item.id,
-                          name: item.name,
-                        })
-                      }
+                      onClick={() => selectNode({ id: item.id })}
                       type="button"
                     >
                       {item.name}

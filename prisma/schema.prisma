@@ -231,6 +231,7 @@ model Document {
   @@index([folderId, deletedAt, createdAt(sort: Desc)])
   @@index([ownerUserId, deletedAt])
   @@index([documentKind, deletedAt])
+  @@index([fileExtension, deletedAt])
   @@map("documents")
 }
 
@@ -296,5 +297,7 @@ model AuditLog {
 
   @@index([actorUserId, createdAt(sort: Desc)])
   @@index([folderId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@index([entityType, createdAt(sort: Desc)])
   @@map("audit_logs")
 }

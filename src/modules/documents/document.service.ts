@@ -1053,11 +1053,25 @@ export async function createPreview(id: string, actor: PermissionActor) {
       409,
     );
   }
+  const signed = await createPresignedDownload({
+    key: document.storageKey!,
+    fileName: document.originalFileName!,
+    mode: "inline",
+  });
+  await getPrismaClient().auditLog.create({
+    data: {
+      actorUserId: actor.id,
+      action: "DOCUMENT_PREVIEWED",
+      entityType: "DOCUMENT",
+      entityId: document.id,
+      folderId: document.folderId,
+      metadata: {
+        originalFileName: document.originalFileName,
+        versionId: document.currentVersion?.id,
+      },
+    },
+  });
   return {
-    data: await createPresignedDownload({
-      key: document.storageKey!,
-      fileName: document.originalFileName!,
-      mode: "inline",
-    }),
+    data: signed,
   };
 }
