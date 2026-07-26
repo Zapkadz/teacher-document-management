@@ -15,6 +15,10 @@ jobs:
     timeout-minutes: 15
     env:
       DATABASE_URL: postgresql://teacher_app:local_dev_password@localhost:5432/teacher_documents?schema=public
+      AUTH_URL: http://localhost:3000
+      AUTH_SECRET: ci_only_secret_at_least_32_characters_long
+      AUTH_GOOGLE_ID: ci-google-client-id
+      AUTH_GOOGLE_SECRET: ci-google-client-secret
 
     steps:
       - name: Checkout

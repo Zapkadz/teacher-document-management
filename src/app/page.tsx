@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main className="flex flex-1 items-center justify-center px-6 py-16">
@@ -7,19 +9,24 @@ export default function Home() {
             aria-hidden="true"
             className="h-2 w-2 rounded-full bg-emerald-500"
           />
-          Phase 0 đã sẵn sàng
+          Phase 1 đã sẵn sàng
         </div>
 
         <h1 className="text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">
           Kho hồ sơ giáo dục
         </h1>
         <p className="mt-5 max-w-xl text-lg leading-8 text-slate-600">
-          Nền tảng quản lý tài liệu giáo viên nội bộ đang được xây dựng theo
-          từng giai đoạn. Hạ tầng ứng dụng, cơ sở dữ liệu và lưu trữ local đã
-          được thiết lập.
+          Hệ thống quản lý tài liệu giáo viên nội bộ. Chỉ những tài khoản Google
+          đã được quản trị viên cấp quyền và đang hoạt động mới có thể truy cập.
         </p>
 
-        <div className="mt-10 border-t border-slate-100 pt-6">
+        <div className="mt-10 flex flex-wrap items-center gap-4 border-t border-slate-100 pt-6">
+          <Link
+            className="rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white transition hover:bg-emerald-800"
+            href="/login"
+          >
+            Đăng nhập
+          </Link>
           <a
             className="font-medium text-emerald-700 underline decoration-emerald-200 underline-offset-4 transition hover:text-emerald-900"
             href="/api/health"

@@ -15,5 +15,8 @@ describe("Home", () => {
         .getByRole("link", { name: "Kiểm tra trạng thái hệ thống" })
         .getAttribute("href"),
     ).toBe("/api/health");
+    expect(
+      screen.getByRole("link", { name: "Đăng nhập" }).getAttribute("href"),
+    ).toBe("/login");
   });
 });
