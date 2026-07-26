@@ -6,3 +6,142 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum GlobalRole {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+}
+
+enum WorkspaceType {
+  PERSONAL
+  SHARED
+}
+
+model User {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String     @unique @db.VarChar(320)
+  name          String?    @map("full_name") @db.VarChar(255)
+  emailVerified DateTime?  @map("email_verified")
+  image         String?    @map("avatar_url")
+  globalRole    GlobalRole @default(USER) @map("global_role")
+  status        UserStatus @default(PENDING)
+  lastLoginAt   DateTime?  @map("last_login_at")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  accounts          Account[]
+  sessions          Session[]
+  personalWorkspace PersonalWorkspace?
+  ownedFolders      Folder[]           @relation("FolderOwner")
+  createdFolders    Folder[]           @relation("FolderCreator")
+  deletedFolders    Folder[]           @relation("FolderDeleter")
+  auditLogs         AuditLog[]         @relation("AuditActor")
+
+  @@map("users")
+}
+
+model Account {
+  userId            String  @map("user_id") @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refreshToken      String? @map("refresh_token")
+  accessToken       String? @map("access_token")
+  expiresAt         Int?    @map("expires_at")
+  tokenType         String? @map("token_type")
+  scope             String?
+  idToken           String? @map("id_token")
+  sessionState      String? @map("session_state")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+  @@map("verification_tokens")
+}
+
+model PersonalWorkspace {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerUserId  String   @unique @map("owner_user_id") @db.Uuid
+  rootFolderId String   @unique @map("root_folder_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  owner      User   @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  rootFolder Folder @relation(fields: [rootFolderId], references: [id], onDelete: Restrict)
+
+  @@map("personal_workspaces")
+}
+
+model Folder {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String        @db.VarChar(255)
+  parentId           String?       @map("parent_id") @db.Uuid
+  workspaceType      WorkspaceType @map("workspace_type")
+  ownerUserId        String?       @map("owner_user_id") @db.Uuid
+  inheritPermissions Boolean       @default(true) @map("inherit_permissions")
+  isLocked           Boolean       @default(false) @map("is_locked")
+  lockDescendants    Boolean       @default(false) @map("lock_descendants")
+  sortOrder          Int           @default(0) @map("sort_order")
+  createdBy          String        @map("created_by") @db.Uuid
+  deletedAt          DateTime?     @map("deleted_at")
+  deletedBy          String?       @map("deleted_by") @db.Uuid
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  parent            Folder?            @relation("FolderTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children          Folder[]           @relation("FolderTree")
+  owner             User?              @relation("FolderOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  creator           User               @relation("FolderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  deleter           User?              @relation("FolderDeleter", fields: [deletedBy], references: [id], onDelete: Restrict)
+  personalWorkspace PersonalWorkspace?
+
+  @@index([parentId, deletedAt])
+  @@index([ownerUserId, workspaceType])
+  @@map("folders")
+}
+
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String   @db.VarChar(100)
+  entityType  String   @map("entity_type") @db.VarChar(50)
+  entityId    String?  @map("entity_id") @db.Uuid
+  folderId    String?  @map("folder_id") @db.Uuid
+  metadata    Json     @default("{}")
+  ipAddress   String?  @map("ip_address") @db.Inet
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([folderId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

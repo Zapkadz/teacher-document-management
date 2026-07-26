@@ -1,0 +1,82 @@
+import "dotenv/config";
+
+import { PrismaPg } from "@prisma/adapter-pg";
+import { z } from "zod";
+
+import { PrismaClient } from "../src/generated/prisma/client";
+
+const envSchema = z.object({
+  DATABASE_URL: z.string().min(1),
+  INITIAL_ADMIN_EMAIL: z
+    .string()
+    .trim()
+    .email()
+    .transform((value) => value.toLowerCase()),
+  INITIAL_ADMIN_NAME: z.string().trim().min(2).max(255),
+});
+
+const env = envSchema.parse(process.env);
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: env.DATABASE_URL }),
+});
+
+async function main() {
+  await prisma.$transaction(async (tx) => {
+    const admin = await tx.user.upsert({
+      where: { email: env.INITIAL_ADMIN_EMAIL },
+      create: {
+        email: env.INITIAL_ADMIN_EMAIL,
+        name: env.INITIAL_ADMIN_NAME,
+        globalRole: "ADMIN",
+        status: "ACTIVE",
+      },
+      update: {
+        name: env.INITIAL_ADMIN_NAME,
+        globalRole: "ADMIN",
+        status: "ACTIVE",
+      },
+      select: {
+        id: true,
+        personalWorkspace: { select: { id: true } },
+      },
+    });
+
+    if (!admin.personalWorkspace) {
+      const root = await tx.folder.create({
+        data: {
+          name: "Kho của tôi",
+          workspaceType: "PERSONAL",
+          ownerUserId: admin.id,
+          createdBy: admin.id,
+        },
+      });
+
+      await tx.personalWorkspace.create({
+        data: {
+          ownerUserId: admin.id,
+          rootFolderId: root.id,
+        },
+      });
+    }
+
+    await tx.auditLog.create({
+      data: {
+        action: "INITIAL_ADMIN_SEEDED",
+        entityType: "USER",
+        entityId: admin.id,
+        metadata: { email: env.INITIAL_ADMIN_EMAIL },
+      },
+    });
+  });
+
+  console.log(`Initial admin is ready: ${env.INITIAL_ADMIN_EMAIL}`);
+}
+
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
