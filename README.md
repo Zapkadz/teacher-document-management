@@ -1,11 +1,14 @@
 # Kho hồ sơ giáo dục
 
 Web app nội bộ phục vụ lưu trữ và quản lý tài liệu giáo viên. Repository hiện
-hoàn thành **Phase 3**: nền tảng hệ thống, đăng nhập Google theo allowlist,
+hoàn thành **Phase 5**: nền tảng hệ thống, đăng nhập Google theo allowlist,
 quản trị người dùng, kho cá nhân và cây thư mục cá nhân/dùng chung với lazy
 loading, breadcrumbs, di chuyển, chống cycle, xóa mềm, khôi phục và permission
-engine có ACL trực tiếp/kế thừa cho người dùng hoặc nhóm. Upload tài liệu thuộc
-Phase 4, chưa được triển khai.
+engine có ACL trực tiếp/kế thừa cho người dùng hoặc nhóm. Hệ thống đã hỗ trợ
+upload file trực tiếp vào MinIO/S3, version 1, danh sách tài liệu, preview PDF/ảnh,
+download có kiểm tra quyền và liên kết Google Drive/YouTube. Quyền ownership,
+khóa thư mục, sửa/di chuyển/xóa mềm tài liệu, thùng rác và khôi phục đã được áp
+dụng đồng nhất ở backend và giao diện.
 
 ## Yêu cầu
 
@@ -28,6 +31,10 @@ Phase 4, chưa được triển khai.
    ```text
    http://localhost:3000/api/auth/callback/google
    ```
+
+   Có thể đổi giới hạn file bằng `MAX_FILE_SIZE_MB` và allowlist extension bằng
+   `ALLOWED_FILE_EXTENSIONS`. Nếu endpoint S3 mà server truy cập khác URL trình
+   duyệt dùng để upload/download, cấu hình thêm `S3_PUBLIC_ENDPOINT`.
 
 3. Cài dependency:
 
@@ -113,6 +120,10 @@ docker compose config --quiet
   topology, ownership và tên thư mục đang hoạt động.
 - Migration Phase 3 tạo ACL thư mục, nhóm, thành viên nhóm cùng các constraint
   bảo đảm mỗi grant chỉ trỏ tới đúng một principal.
+- Migration Phase 4 tạo documents, document versions và upload sessions dùng một
+  lần. Constraint database bảo đảm metadata file/link nhất quán.
+- Phase 5 dùng các cột ownership, soft-delete và folder-lock đã có từ Phase 2/4,
+  vì vậy không cần migration schema mới.
 
 ## API Phase 1
 
@@ -153,6 +164,42 @@ Backend hợp nhất quyền direct, inherited và group theo phép OR, không c
 `inheritPermissions=false` tạo ranh giới chặn quyền ở các cấp cao hơn. Admin
 bypass toàn bộ permission guard; người dùng thường chỉ nhìn thấy folder và
 breadcrumb có quyền `VIEW`. Mọi thay đổi ACL/kế thừa đều được ghi audit log.
+
+## API Phase 4
+
+- `GET /api/folders/:id/documents`: danh sách tài liệu có phân trang.
+- `POST /api/documents/upload-init`: validate file, kiểm tra `UPLOAD` và tạo
+  pre-signed PUT URL có hạn 15 phút.
+- `POST /api/documents/upload-complete`: đối chiếu object bằng HEAD rồi tạo
+  document cùng version 1.
+- `POST /api/documents/link`: lưu link Google Drive hoặc YouTube thuộc allowlist.
+- `GET /api/documents/:id`: metadata tài liệu.
+- `GET /api/documents/:id/download`: yêu cầu `VIEW` + `DOWNLOAD`, ghi audit và
+  trả pre-signed URL có hạn 5 phút.
+- `GET /api/documents/:id/preview`: yêu cầu `VIEW` + `PREVIEW`; chỉ PDF và ảnh an
+  toàn được mở inline.
+
+Object key luôn dùng UUID theo workspace/folder/document/version, không dùng tên
+file làm định danh. Bucket không public. Backend kiểm tra extension, MIME, dung
+lượng và marker upload trước khi ghi database.
+
+## API Phase 5
+
+- `PATCH /api/documents/:id`: sửa title/description theo `EDIT_OWN` hoặc
+  `EDIT_ANY`.
+- `POST /api/documents/:id/move`: yêu cầu quyền move ở nguồn và `UPLOAD` ở đích.
+- `DELETE /api/documents/:id`: xóa mềm, giữ nguyên object trong storage.
+- `POST /api/documents/:id/restore`: khôi phục về thư mục cũ hoặc thư mục đích.
+- `POST /api/folders/:id/lock`: khóa/mở khóa trực tiếp hoặc áp dụng cho toàn bộ
+  thư mục con.
+- `GET /api/trash`: danh sách tài liệu đã xóa trong phạm vi có `RESTORE`.
+- `POST /api/trash/restore`: khôi phục một batch tài liệu trong transaction.
+- `DELETE /api/trash/purge`: chỉ admin được xóa vĩnh viễn.
+
+Khóa thư mục không chặn xem, preview hoặc download, nhưng chặn người dùng thường
+upload, tạo/sửa/di chuyển/xóa thư mục và tài liệu. Admin bypass khóa để xử lý sự
+cố và luôn có thể mở khóa. Khóa kế thừa chỉ có hiệu lực khi thư mục nguồn bật
+`lockDescendants`.
 
 Muốn dừng container mà vẫn giữ dữ liệu:
 

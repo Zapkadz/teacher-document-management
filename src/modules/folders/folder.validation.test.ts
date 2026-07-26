@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { folderNameSchema, folderTreeQuerySchema } from "./folder.validation";
+import {
+  folderNameSchema,
+  folderTreeQuerySchema,
+  lockFolderSchema,
+} from "./folder.validation";
 
 describe("folder validation", () => {
   it("trims a valid folder name", () => {
@@ -26,5 +30,19 @@ describe("folder validation", () => {
       workspace: "PERSONAL",
       deleted: false,
     });
+  });
+
+  it("normalizes descendant lock scope when omitted", () => {
+    expect(lockFolderSchema.parse({ locked: true })).toEqual({
+      locked: true,
+      applyToDescendants: false,
+    });
+    expect(
+      lockFolderSchema.safeParse({
+        locked: true,
+        applyToDescendants: true,
+        bypass: true,
+      }).success,
+    ).toBe(false);
   });
 });

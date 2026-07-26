@@ -24,6 +24,17 @@ enum WorkspaceType {
   SHARED
 }
 
+enum DocumentKind {
+  FILE
+  GOOGLE_DRIVE_LINK
+  YOUTUBE_LINK
+}
+
+enum DocumentStatus {
+  ACTIVE
+  ARCHIVED
+}
+
 model User {
   id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email         String     @unique @db.VarChar(320)
@@ -47,6 +58,10 @@ model User {
   createdGroups     Group[]            @relation("GroupCreator")
   folderPermissions FolderPermission[] @relation("PermissionUser")
   permissionGrants  FolderPermission[] @relation("PermissionGranter")
+  ownedDocuments    Document[]         @relation("DocumentOwner")
+  deletedDocuments  Document[]         @relation("DocumentDeleter")
+  documentVersions  DocumentVersion[]  @relation("VersionCreator")
+  uploadSessions    UploadSession[]
 
   @@map("users")
 }
@@ -127,6 +142,8 @@ model Folder {
   deleter           User?              @relation("FolderDeleter", fields: [deletedBy], references: [id], onDelete: Restrict)
   personalWorkspace PersonalWorkspace?
   permissions       FolderPermission[]
+  documents         Document[]
+  uploadSessions    UploadSession[]
 
   @@index([parentId, deletedAt])
   @@index([ownerUserId, workspaceType])
@@ -183,6 +200,84 @@ model FolderPermission {
   @@index([userId, folderId])
   @@index([groupId, folderId])
   @@map("folder_permissions")
+}
+
+model Document {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  folderId         String         @map("folder_id") @db.Uuid
+  ownerUserId      String         @map("owner_user_id") @db.Uuid
+  title            String         @db.VarChar(255)
+  description      String?
+  documentKind     DocumentKind   @map("document_kind")
+  originalFileName String?        @map("original_file_name") @db.VarChar(255)
+  mimeType         String?        @map("mime_type") @db.VarChar(255)
+  fileExtension    String?        @map("file_extension") @db.VarChar(20)
+  sizeBytes        BigInt?        @map("size_bytes")
+  storageKey       String?        @unique @map("storage_key")
+  externalUrl      String?        @map("external_url")
+  currentVersionId String?        @unique @map("current_version_id") @db.Uuid
+  status           DocumentStatus @default(ACTIVE)
+  deletedAt        DateTime?      @map("deleted_at")
+  deletedBy        String?        @map("deleted_by") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  folder         Folder           @relation(fields: [folderId], references: [id], onDelete: Restrict)
+  owner          User             @relation("DocumentOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  deleter        User?            @relation("DocumentDeleter", fields: [deletedBy], references: [id], onDelete: Restrict)
+  currentVersion DocumentVersion? @relation("CurrentDocumentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions       DocumentVersion[] @relation("DocumentVersions")
+
+  @@index([folderId, deletedAt, createdAt(sort: Desc)])
+  @@index([ownerUserId, deletedAt])
+  @@index([documentKind, deletedAt])
+  @@map("documents")
+}
+
+model DocumentVersion {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId       String   @map("document_id") @db.Uuid
+  versionNumber    Int      @map("version_number")
+  originalFileName String?  @map("original_file_name") @db.VarChar(255)
+  storageKey       String?  @unique @map("storage_key")
+  externalUrl      String?  @map("external_url")
+  mimeType         String?  @map("mime_type") @db.VarChar(255)
+  sizeBytes        BigInt?  @map("size_bytes")
+  changeNote       String?  @map("change_note")
+  createdBy        String   @map("created_by") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  document  Document  @relation("DocumentVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  creator   User      @relation("VersionCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  currentFor Document? @relation("CurrentDocumentVersion")
+
+  @@unique([documentId, versionNumber])
+  @@index([createdBy, createdAt(sort: Desc)])
+  @@map("document_versions")
+}
+
+model UploadSession {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId       String    @unique @map("document_id") @db.Uuid
+  versionId        String    @unique @map("version_id") @db.Uuid
+  folderId         String    @map("folder_id") @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  originalFileName String    @map("original_file_name") @db.VarChar(255)
+  safeFileName     String    @map("safe_file_name") @db.VarChar(255)
+  mimeType         String    @map("mime_type") @db.VarChar(255)
+  fileExtension    String    @map("file_extension") @db.VarChar(20)
+  sizeBytes        BigInt    @map("size_bytes")
+  storageKey       String    @unique @map("storage_key")
+  expiresAt        DateTime  @map("expires_at")
+  completedAt      DateTime? @map("completed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([folderId, completedAt])
+  @@map("upload_sessions")
 }
 
 model AuditLog {
