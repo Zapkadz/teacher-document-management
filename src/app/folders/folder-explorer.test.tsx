@@ -113,12 +113,13 @@ describe("FolderExplorer", () => {
         canManagePermissions: true,
       },
     };
-    const fetchMock = vi
-      .fn()
-      .mockImplementationOnce(() => jsonResponse({ data: [root] }))
-      .mockImplementationOnce(() => jsonResponse({ data: root }))
-      .mockImplementationOnce(() =>
-        jsonResponse({
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes(`/api/folders/${root.id}/documents`)) {
+        return jsonResponse({ data: [] });
+      }
+      if (url.includes(`/api/folders/${root.id}/permissions`)) {
+        return jsonResponse({
           data: {
             folderId: root.id,
             inheritPermissions: true,
@@ -154,8 +155,13 @@ describe("FolderExplorer", () => {
             availableUsers: [],
             availableGroups: [],
           },
-        }),
-      );
+        });
+      }
+      if (url === `/api/folders/${root.id}`) {
+        return jsonResponse({ data: root });
+      }
+      return jsonResponse({ data: [root] });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(

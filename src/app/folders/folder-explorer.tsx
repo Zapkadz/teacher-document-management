@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { DocumentPanel } from "./document-panel";
 import { PermissionPanel } from "./permission-panel";
 
 type Workspace = "PERSONAL" | "SHARED";
@@ -33,6 +34,7 @@ type FolderDetails = TreeNode & {
   updatedAt: string;
   breadcrumbs: Array<{ id: string; name: string }>;
   capabilities: {
+    canUpload: boolean;
     canCreateSubfolder: boolean;
     canRename: boolean;
     canMove: boolean;
@@ -662,14 +664,11 @@ export function FolderExplorer({
                 </div>
               ) : null}
 
-              <div className="mt-8 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
-                <p className="font-medium text-slate-700">
-                  Thư mục này chưa có tài liệu.
-                </p>
-                <p className="mt-2 text-sm text-slate-500">
-                  Upload và tài liệu được triển khai sau permission engine.
-                </p>
-              </div>
+              <DocumentPanel
+                canUpload={selected.capabilities.canUpload}
+                folderId={selected.id}
+                key={selected.id}
+              />
             </>
           ) : (
             <div className="flex min-h-96 items-center justify-center text-center">

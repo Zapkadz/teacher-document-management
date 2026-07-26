@@ -475,6 +475,7 @@ export async function getFolderDetails(id: string, actor: FolderActor) {
           name,
         })),
       capabilities: {
+        canUpload: folder.deletedAt === null && has("UPLOAD"),
         canCreateSubfolder:
           folder.deletedAt === null && has("CREATE_SUBFOLDER"),
         canRename:
