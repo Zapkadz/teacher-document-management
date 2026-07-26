@@ -43,6 +43,10 @@ model User {
   createdFolders    Folder[]           @relation("FolderCreator")
   deletedFolders    Folder[]           @relation("FolderDeleter")
   auditLogs         AuditLog[]         @relation("AuditActor")
+  groupMemberships  GroupMember[]
+  createdGroups     Group[]            @relation("GroupCreator")
+  folderPermissions FolderPermission[] @relation("PermissionUser")
+  permissionGrants  FolderPermission[] @relation("PermissionGranter")
 
   @@map("users")
 }
@@ -122,11 +126,63 @@ model Folder {
   creator           User               @relation("FolderCreator", fields: [createdBy], references: [id], onDelete: Restrict)
   deleter           User?              @relation("FolderDeleter", fields: [deletedBy], references: [id], onDelete: Restrict)
   personalWorkspace PersonalWorkspace?
+  permissions       FolderPermission[]
 
   @@index([parentId, deletedAt])
   @@index([ownerUserId, workspaceType])
   @@index([deletionBatchId])
   @@map("folders")
+}
+
+model Group {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @unique @db.VarChar(255)
+  description String?
+  createdBy   String   @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  creator     User               @relation("GroupCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  members     GroupMember[]
+  permissions FolderPermission[]
+
+  @@map("groups")
+}
+
+model GroupMember {
+  groupId   String   @map("group_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@index([userId, groupId])
+  @@map("group_members")
+}
+
+model FolderPermission {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  folderId             String   @map("folder_id") @db.Uuid
+  principalType        String   @map("principal_type") @db.VarChar(10)
+  userId               String?  @map("user_id") @db.Uuid
+  groupId              String?  @map("group_id") @db.Uuid
+  permissions          Json     @default("[]")
+  appliesToDescendants Boolean  @default(true) @map("applies_to_descendants")
+  grantedBy            String   @map("granted_by") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  folder  Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  user    User?   @relation("PermissionUser", fields: [userId], references: [id], onDelete: Cascade)
+  group   Group?  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  granter User    @relation("PermissionGranter", fields: [grantedBy], references: [id], onDelete: Restrict)
+
+  @@index([folderId, principalType])
+  @@index([userId, folderId])
+  @@index([groupId, folderId])
+  @@map("folder_permissions")
 }
 
 model AuditLog {

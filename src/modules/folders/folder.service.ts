@@ -8,12 +8,14 @@ import type {
 } from "@/generated/prisma/client";
 import { getPrismaClient } from "@/lib/db/prisma";
 import { AppError } from "@/lib/errors/app-error";
-
+import type { Permission } from "@/modules/permissions/permission.constants";
 import {
-  assertFolderAccess,
-  assertPersonalOwnerAccess,
-  type FolderActor,
-} from "./folder.policy";
+  assertFolderPermission,
+  getEffectivePermissions,
+  getEffectivePermissionsForFolders,
+} from "@/modules/permissions/permission.engine";
+
+import type { FolderActor } from "./folder.policy";
 import { assertValidMoveTopology, getMaxFolderDepth } from "./folder-topology";
 import type {
   CreateFolderInput,
@@ -81,7 +83,7 @@ function assertMutableFolder(folder: FolderRecord): void {
   }
 }
 
-function toTreeNode(folder: TreeNodeRecord) {
+function toTreeNode(folder: TreeNodeRecord, hasChildren?: boolean) {
   return {
     id: folder.id,
     name: folder.name,
@@ -91,9 +93,49 @@ function toTreeNode(folder: TreeNodeRecord) {
     isLocked: folder.isLocked,
     sortOrder: folder.sortOrder,
     deletedAt: folder.deletedAt,
-    hasChildren: folder._count.children > 0,
+    hasChildren: hasChildren ?? folder._count.children > 0,
     isSystemRoot: isSystemRoot(folder),
   };
+}
+
+async function toVisibleTreeNodes(
+  actor: FolderActor,
+  folders: TreeNodeRecord[],
+  database: DatabaseClient = getPrismaClient(),
+) {
+  if (folders.length === 0) return [];
+
+  const permissions = await getEffectivePermissionsForFolders(
+    actor,
+    folders.map(({ id }) => id),
+    database,
+  );
+  const visible = folders.filter((folder) =>
+    permissions.get(folder.id)?.permissions.includes("VIEW"),
+  );
+  const children = await database.folder.findMany({
+    where: {
+      parentId: { in: visible.map(({ id }) => id) },
+      deletedAt: null,
+    },
+    select: { id: true, parentId: true },
+  });
+  const childPermissions = await getEffectivePermissionsForFolders(
+    actor,
+    children.map(({ id }) => id),
+    database,
+  );
+  const parentsWithVisibleChildren = new Set(
+    children
+      .filter((child) =>
+        childPermissions.get(child.id)?.permissions.includes("VIEW"),
+      )
+      .map(({ parentId }) => parentId),
+  );
+
+  return visible.map((folder) =>
+    toTreeNode(folder, parentsWithVisibleChildren.has(folder.id)),
+  );
 }
 
 async function findFolderForAccess(
@@ -101,6 +143,7 @@ async function findFolderForAccess(
   id: string,
   actor: FolderActor,
   includeDeleted = false,
+  requiredPermission: Permission = "VIEW",
 ): Promise<FolderRecord> {
   const folder = await database.folder.findUnique({
     where: { id },
@@ -111,7 +154,7 @@ async function findFolderForAccess(
     throw new AppError("NOT_FOUND", "Không tìm thấy thư mục", 404);
   }
 
-  assertFolderAccess(actor, folder);
+  await assertFolderPermission(actor, folder.id, requiredPermission, database);
   return folder;
 }
 
@@ -249,7 +292,6 @@ async function getWorkspaceRoot(
 
   if (workspaceType === "PERSONAL") {
     const ownerId = ownerUserId ?? actor.id;
-    assertPersonalOwnerAccess(actor, ownerId);
 
     const workspace = await prisma.personalWorkspace.findUnique({
       where: { ownerUserId: ownerId },
@@ -266,14 +308,16 @@ async function getWorkspaceRoot(
       );
     }
 
+    await assertFolderPermission(
+      actor,
+      workspace.rootFolder.id,
+      "VIEW",
+      prisma,
+    );
     return workspace.rootFolder;
   }
 
-  if (actor.globalRole !== "ADMIN") {
-    return null;
-  }
-
-  return prisma.folder.findFirst({
+  const root = await prisma.folder.findFirst({
     where: {
       workspaceType: "SHARED",
       parentId: null,
@@ -281,6 +325,10 @@ async function getWorkspaceRoot(
     },
     select: treeNodeSelect,
   });
+
+  if (!root) return null;
+  const effective = await getEffectivePermissions(actor, root.id, prisma);
+  return effective.permissions.includes("VIEW") ? root : null;
 }
 
 async function listDeletedRoots(actor: FolderActor, query: FolderTreeQuery) {
@@ -289,9 +337,18 @@ async function listDeletedRoots(actor: FolderActor, query: FolderTreeQuery) {
     query.workspace === "PERSONAL" ? (query.ownerUserId ?? actor.id) : null;
 
   if (query.workspace === "PERSONAL") {
-    assertPersonalOwnerAccess(actor, ownerUserId!);
-  } else if (actor.globalRole !== "ADMIN") {
-    return [];
+    const workspace = await prisma.personalWorkspace.findUnique({
+      where: { ownerUserId: ownerUserId! },
+      select: { rootFolderId: true },
+    });
+    if (!workspace) {
+      throw new AppError(
+        "PERSONAL_WORKSPACE_NOT_FOUND",
+        "Không tìm thấy kho cá nhân",
+        404,
+      );
+    }
+    await assertFolderPermission(actor, workspace.rootFolderId, "VIEW", prisma);
   }
 
   const folders = await prisma.folder.findMany({
@@ -305,7 +362,17 @@ async function listDeletedRoots(actor: FolderActor, query: FolderTreeQuery) {
     orderBy: [{ deletedAt: "desc" }, { name: "asc" }],
   });
 
-  return folders.map(toTreeNode);
+  const permissions = await getEffectivePermissionsForFolders(
+    actor,
+    folders.map(({ id }) => id),
+    prisma,
+  );
+
+  return folders
+    .filter((folder) =>
+      permissions.get(folder.id)?.permissions.includes("RESTORE"),
+    )
+    .map((folder) => toTreeNode(folder));
 }
 
 export async function getFolderTree(
@@ -335,7 +402,7 @@ export async function getFolderTree(
   }
 
   if (!query.rootId) {
-    return { data: [toTreeNode(root)] };
+    return { data: await toVisibleTreeNodes(actor, [root]) };
   }
 
   const parent = await findFolderForAccess(
@@ -364,13 +431,24 @@ export async function getFolderTree(
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
   });
 
-  return { data: children.map(toTreeNode) };
+  return { data: await toVisibleTreeNodes(actor, children) };
 }
 
 export async function getFolderDetails(id: string, actor: FolderActor) {
   const prisma = getPrismaClient();
   const folder = await findFolderForAccess(prisma, id, actor, true);
   const breadcrumbs = await getFolderPath(prisma, id);
+  const [effective, breadcrumbPermissions] = await Promise.all([
+    getEffectivePermissions(actor, id, prisma),
+    getEffectivePermissionsForFolders(
+      actor,
+      breadcrumbs.map((folder) => folder.id),
+      prisma,
+    ),
+  ]);
+  const has = (permission: Permission) =>
+    effective.permissions.includes(permission);
+  const ownsFolder = folder.createdBy === actor.id;
 
   return {
     data: {
@@ -388,16 +466,32 @@ export async function getFolderDetails(id: string, actor: FolderActor) {
       createdAt: folder.createdAt,
       updatedAt: folder.updatedAt,
       isSystemRoot: isSystemRoot(folder),
-      breadcrumbs: breadcrumbs.map(({ id: pathId, name }) => ({
-        id: pathId,
-        name,
-      })),
+      breadcrumbs: breadcrumbs
+        .filter((item) =>
+          breadcrumbPermissions.get(item.id)?.permissions.includes("VIEW"),
+        )
+        .map(({ id: pathId, name }) => ({
+          id: pathId,
+          name,
+        })),
       capabilities: {
-        canCreateSubfolder: folder.deletedAt === null,
-        canRename: folder.deletedAt === null && !isSystemRoot(folder),
-        canMove: folder.deletedAt === null && !isSystemRoot(folder),
-        canDelete: folder.deletedAt === null && !isSystemRoot(folder),
-        canRestore: folder.deletedAt !== null && !isSystemRoot(folder),
+        canCreateSubfolder:
+          folder.deletedAt === null && has("CREATE_SUBFOLDER"),
+        canRename:
+          folder.deletedAt === null &&
+          !isSystemRoot(folder) &&
+          (has("EDIT_ANY") || (ownsFolder && has("EDIT_OWN"))),
+        canMove:
+          folder.deletedAt === null &&
+          !isSystemRoot(folder) &&
+          (has("MOVE_ANY") || (ownsFolder && has("MOVE_OWN"))),
+        canDelete:
+          folder.deletedAt === null &&
+          !isSystemRoot(folder) &&
+          (has("DELETE_ANY") || (ownsFolder && has("DELETE_OWN"))),
+        canRestore:
+          folder.deletedAt !== null && !isSystemRoot(folder) && has("RESTORE"),
+        canManagePermissions: has("MANAGE_PERMISSIONS"),
       },
     },
   };
@@ -412,7 +506,13 @@ export async function createFolder(
   try {
     return await prisma.$transaction(async (tx) => {
       await acquireTopologyLock(tx);
-      const parent = await findFolderForAccess(tx, input.parentId, actor);
+      const parent = await findFolderForAccess(
+        tx,
+        input.parentId,
+        actor,
+        false,
+        "CREATE_SUBFOLDER",
+      );
 
       if (parent.workspaceType !== input.workspaceType) {
         throw new AppError(
@@ -484,6 +584,12 @@ export async function renameFolder(
   try {
     return await prisma.$transaction(async (tx) => {
       const current = await findFolderForAccess(tx, id, actor);
+      await assertFolderPermission(
+        actor,
+        current.id,
+        current.createdBy === actor.id ? "EDIT_OWN" : "EDIT_ANY",
+        tx,
+      );
       assertMutableFolder(current);
       await assertNameAvailable(tx, current.parentId!, name, current.id);
 
@@ -527,8 +633,20 @@ export async function moveFolder(
     return await prisma.$transaction(async (tx) => {
       await acquireTopologyLock(tx);
       const source = await findFolderForAccess(tx, id, actor);
+      await assertFolderPermission(
+        actor,
+        source.id,
+        source.createdBy === actor.id ? "MOVE_OWN" : "MOVE_ANY",
+        tx,
+      );
       assertMutableFolder(source);
-      const target = await findFolderForAccess(tx, input.targetParentId, actor);
+      const target = await findFolderForAccess(
+        tx,
+        input.targetParentId,
+        actor,
+        false,
+        "CREATE_SUBFOLDER",
+      );
       assertSameWorkspace(source, target);
 
       const targetPath = await getFolderPath(tx, target.id);
@@ -589,6 +707,12 @@ export async function softDeleteFolder(id: string, actor: FolderActor) {
   return prisma.$transaction(async (tx) => {
     await acquireTopologyLock(tx);
     const folder = await findFolderForAccess(tx, id, actor);
+    await assertFolderPermission(
+      actor,
+      folder.id,
+      folder.createdBy === actor.id ? "DELETE_OWN" : "DELETE_ANY",
+      tx,
+    );
     assertMutableFolder(folder);
     const deletionBatchId = randomUUID();
     const deletedAt = new Date();
@@ -650,7 +774,7 @@ export async function restoreFolder(id: string, actor: FolderActor) {
   try {
     return await prisma.$transaction(async (tx) => {
       await acquireTopologyLock(tx);
-      const folder = await findFolderForAccess(tx, id, actor, true);
+      const folder = await findFolderForAccess(tx, id, actor, true, "RESTORE");
       assertMutableFolder(folder);
 
       if (!folder.deletedAt || !folder.deletionBatchId) {
