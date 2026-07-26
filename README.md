@@ -1,10 +1,11 @@
 # Kho hồ sơ giáo dục
 
 Web app nội bộ phục vụ lưu trữ và quản lý tài liệu giáo viên. Repository hiện
-hoàn thành **Phase 2**: nền tảng hệ thống, đăng nhập Google theo allowlist,
+hoàn thành **Phase 3**: nền tảng hệ thống, đăng nhập Google theo allowlist,
 quản trị người dùng, kho cá nhân và cây thư mục cá nhân/dùng chung với lazy
-loading, breadcrumbs, di chuyển, chống cycle, xóa mềm và khôi phục. ACL và
-upload tài liệu thuộc các phase sau, chưa được triển khai.
+loading, breadcrumbs, di chuyển, chống cycle, xóa mềm, khôi phục và permission
+engine có ACL trực tiếp/kế thừa cho người dùng hoặc nhóm. Upload tài liệu thuộc
+Phase 4, chưa được triển khai.
 
 ## Yêu cầu
 
@@ -61,8 +62,9 @@ Email Google đăng nhập phải trùng với email đã seed hoặc được a
 `/admin/users`, có trạng thái `ACTIVE`, và được Google xác minh. Hệ thống không
 tự tạo người dùng từ OAuth.
 
-`npm run db:seed` cũng tạo root `Kho dùng chung`. Trước Phase 3, chỉ admin truy
-cập cây dùng chung; người dùng thường chỉ quản lý kho cá nhân của chính mình.
+`npm run db:seed` cũng tạo root `Kho dùng chung`. Admin có thể mở nút `Phân quyền`
+trên thư mục để cấp quyền truy cập kho dùng chung cho người dùng `ACTIVE`. Chủ
+kho cá nhân quản lý nội dung của mình nhưng không mặc định có quyền chia sẻ.
 Giới hạn độ sâu cây được cấu hình qua `MAX_FOLDER_DEPTH` (mặc định 20).
 
 Các tài khoản và mật khẩu trong `.env.example` chỉ dành cho local development.
@@ -109,6 +111,8 @@ docker compose config --quiet
   root folders và audit logs.
 - Migration Phase 2 bổ sung deletion batch cùng các constraint/index bảo vệ
   topology, ownership và tên thư mục đang hoạt động.
+- Migration Phase 3 tạo ACL thư mục, nhóm, thành viên nhóm cùng các constraint
+  bảo đảm mỗi grant chỉ trỏ tới đúng một principal.
 
 ## API Phase 1
 
@@ -135,6 +139,20 @@ Mọi endpoint quản trị đều kiểm tra lại session, trạng thái `ACTI
 Root hệ thống không thể đổi tên, di chuyển hoặc xóa. Backend trả `403` khi người
 dùng truy cập trực tiếp kho cá nhân của người khác. Integration tests dùng
 PostgreSQL được bật bằng `RUN_DATABASE_TESTS=true`; CI luôn chạy bộ test này.
+
+## API Phase 3
+
+- `GET /api/folders/:id/permissions`: quyền trực tiếp, kế thừa và principal có
+  thể được cấp quyền.
+- `POST /api/folders/:id/permissions`: cấp quyền cho một hoặc nhiều user/group.
+- `PATCH /api/folders/:id/permissions/:permissionId`: sửa quyền trực tiếp.
+- `DELETE /api/folders/:id/permissions/:permissionId`: thu hồi quyền trực tiếp.
+- `POST /api/folders/:id/inheritance`: bật hoặc tắt kế thừa từ thư mục cha.
+
+Backend hợp nhất quyền direct, inherited và group theo phép OR, không có deny.
+`inheritPermissions=false` tạo ranh giới chặn quyền ở các cấp cao hơn. Admin
+bypass toàn bộ permission guard; người dùng thường chỉ nhìn thấy folder và
+breadcrumb có quyền `VIEW`. Mọi thay đổi ACL/kế thừa đều được ghi audit log.
 
 Muốn dừng container mà vẫn giữ dữ liệu:
 

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { PermissionPanel } from "./permission-panel";
+
 type Workspace = "PERSONAL" | "SHARED";
 
 type OwnerOption = {
@@ -36,6 +38,7 @@ type FolderDetails = TreeNode & {
     canMove: boolean;
     canDelete: boolean;
     canRestore: boolean;
+    canManagePermissions: boolean;
   };
 };
 
@@ -176,6 +179,7 @@ export function FolderExplorer({
   const [showTrash, setShowTrash] = useState(false);
   const [moveMode, setMoveMode] = useState(false);
   const [moveTargetId, setMoveTargetId] = useState("");
+  const [permissionOpen, setPermissionOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -241,6 +245,7 @@ export function FolderExplorer({
       setExpandedIds(new Set());
       setSelected(null);
       setMoveMode(false);
+      setPermissionOpen(false);
       setMessage(successMessage ?? null);
       if (showTrash) {
         const trashBody = await requestJson<{ data: TreeNode[] }>(
@@ -293,6 +298,7 @@ export function FolderExplorer({
       );
       setSelected(body.data);
       setMoveMode(false);
+      setPermissionOpen(false);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Không thể mở thư mục",
@@ -598,8 +604,26 @@ export function FolderExplorer({
                       Xóa
                     </button>
                   ) : null}
+                  {selected.capabilities.canManagePermissions ? (
+                    <button
+                      className="rounded-lg border border-emerald-300 px-4 py-2 text-sm font-medium text-emerald-800"
+                      disabled={busy}
+                      onClick={() => setPermissionOpen((current) => !current)}
+                      type="button"
+                    >
+                      Phân quyền
+                    </button>
+                  ) : null}
                 </div>
               </div>
+
+              {permissionOpen ? (
+                <PermissionPanel
+                  folderId={selected.id}
+                  folderName={selected.name}
+                  onClose={() => setPermissionOpen(false)}
+                />
+              ) : null}
 
               {moveMode ? (
                 <div className="mt-5 flex flex-wrap items-end gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
