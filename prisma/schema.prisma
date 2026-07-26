@@ -52,13 +52,13 @@ model Account {
   type              String
   provider          String
   providerAccountId String  @map("provider_account_id")
-  refreshToken      String? @map("refresh_token")
-  accessToken       String? @map("access_token")
-  expiresAt         Int?    @map("expires_at")
-  tokenType         String? @map("token_type")
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
   scope             String?
-  idToken           String? @map("id_token")
-  sessionState      String? @map("session_state")
+  id_token          String?
+  session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -112,6 +112,7 @@ model Folder {
   createdBy          String        @map("created_by") @db.Uuid
   deletedAt          DateTime?     @map("deleted_at")
   deletedBy          String?       @map("deleted_by") @db.Uuid
+  deletionBatchId    String?       @map("deletion_batch_id") @db.Uuid
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
 
@@ -124,6 +125,7 @@ model Folder {
 
   @@index([parentId, deletedAt])
   @@index([ownerUserId, workspaceType])
+  @@index([deletionBatchId])
   @@map("folders")
 }
 

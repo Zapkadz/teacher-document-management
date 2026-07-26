@@ -13,7 +13,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="vi" className="h-full">
-      <body className="flex min-h-full flex-col antialiased">{children}</body>
+      <body
+        className="flex min-h-full flex-col antialiased"
+        suppressHydrationWarning
+      >
+        {children}
+      </body>
     </html>
   );
 }

@@ -1,9 +1,10 @@
 # Kho hồ sơ giáo dục
 
 Web app nội bộ phục vụ lưu trữ và quản lý tài liệu giáo viên. Repository hiện
-hoàn thành **Phase 1**: nền tảng hệ thống, đăng nhập Google theo allowlist,
-trạng thái/vai trò người dùng, trang quản trị tài khoản và khởi tạo kho cá nhân.
-Cây thư mục, ACL và upload tài liệu thuộc các phase sau, chưa được triển khai.
+hoàn thành **Phase 2**: nền tảng hệ thống, đăng nhập Google theo allowlist,
+quản trị người dùng, kho cá nhân và cây thư mục cá nhân/dùng chung với lazy
+loading, breadcrumbs, di chuyển, chống cycle, xóa mềm và khôi phục. ACL và
+upload tài liệu thuộc các phase sau, chưa được triển khai.
 
 ## Yêu cầu
 
@@ -60,6 +61,10 @@ Email Google đăng nhập phải trùng với email đã seed hoặc được a
 `/admin/users`, có trạng thái `ACTIVE`, và được Google xác minh. Hệ thống không
 tự tạo người dùng từ OAuth.
 
+`npm run db:seed` cũng tạo root `Kho dùng chung`. Trước Phase 3, chỉ admin truy
+cập cây dùng chung; người dùng thường chỉ quản lý kho cá nhân của chính mình.
+Giới hạn độ sâu cây được cấu hình qua `MAX_FOLDER_DEPTH` (mặc định 20).
+
 Các tài khoản và mật khẩu trong `.env.example` chỉ dành cho local development.
 Phải thay bằng secret riêng khi triển khai. Bucket MinIO được tạo ở chế độ
 private bởi service `minio-init`.
@@ -102,6 +107,8 @@ docker compose config --quiet
 - Migration baseline Phase 0 bật extension PostgreSQL `pgcrypto`.
 - Migration Phase 1 tạo users, Auth.js accounts/sessions, personal workspaces,
   root folders và audit logs.
+- Migration Phase 2 bổ sung deletion batch cùng các constraint/index bảo vệ
+  topology, ownership và tên thư mục đang hoạt động.
 
 ## API Phase 1
 
@@ -113,6 +120,21 @@ docker compose config --quiet
 
 Mọi endpoint quản trị đều kiểm tra lại session, trạng thái `ACTIVE` và vai trò
 `ADMIN` ở backend. Không thể vô hiệu hóa quản trị viên `ACTIVE` cuối cùng.
+
+## API Phase 2
+
+- `GET /api/folders/tree`: tải root hoặc một cấp con; hỗ trợ personal/shared và
+  danh sách nhánh đã xóa.
+- `GET /api/folders/:id`: metadata, breadcrumbs và capability.
+- `POST /api/folders`: tạo thư mục con.
+- `PATCH /api/folders/:id`: đổi tên.
+- `POST /api/folders/:id/move`: di chuyển có kiểm tra cycle và độ sâu.
+- `DELETE /api/folders/:id`: xóa mềm toàn nhánh trong transaction.
+- `POST /api/folders/:id/restore`: khôi phục đúng nhánh của cùng đợt xóa.
+
+Root hệ thống không thể đổi tên, di chuyển hoặc xóa. Backend trả `403` khi người
+dùng truy cập trực tiếp kho cá nhân của người khác. Integration tests dùng
+PostgreSQL được bật bằng `RUN_DATABASE_TESTS=true`; CI luôn chạy bộ test này.
 
 Muốn dừng container mà vẫn giữ dữ liệu:
 

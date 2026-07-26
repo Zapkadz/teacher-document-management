@@ -37,12 +37,15 @@ export default async function DashboardPage() {
         </p>
 
         <div className="mt-8 flex flex-wrap gap-3">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            Kho cá nhân đã được khởi tạo. Chức năng thư mục sẽ có ở Phase 2.
-          </div>
+          <Link
+            className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800"
+            href="/folders"
+          >
+            Mở kho hồ sơ
+          </Link>
           {user.globalRole === "ADMIN" ? (
             <Link
-              className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-800"
+              className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-900 hover:bg-emerald-100"
               href="/admin/users"
             >
               Quản lý người dùng

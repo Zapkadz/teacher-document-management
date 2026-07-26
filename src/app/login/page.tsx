@@ -7,7 +7,7 @@ const errorMessages: Record<string, string> = {
   AccessDenied:
     "Tài khoản chưa được cấp quyền hoặc đang bị vô hiệu hóa. Vui lòng liên hệ quản trị viên.",
   Configuration:
-    "Cấu hình đăng nhập chưa hoàn tất. Vui lòng liên hệ quản trị viên.",
+    "Google OAuth chưa hợp lệ. Hãy kiểm tra Client ID, Client Secret, redirect URI và khởi động lại server.",
 };
 
 type LoginPageProps = {
