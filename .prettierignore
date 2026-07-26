@@ -1,0 +1,7 @@
+.next
+coverage
+node_modules
+scaffold-phase0
+src/generated/prisma
+docs/specification
+package-lock.json
