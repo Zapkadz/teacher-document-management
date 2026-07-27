@@ -135,7 +135,10 @@ export async function searchMetadata(
           where: {
             deletedAt: null,
             status: "ACTIVE",
-            folder: { deletedAt: null },
+            folder: {
+              deletedAt: null,
+              academicYearId: query.academicYearId,
+            },
             ownerUserId: query.ownerUserId,
             folderId: query.folderId,
             createdAt: { gte: query.from, lte: query.to },
@@ -189,6 +192,7 @@ export async function searchMetadata(
       ? prisma.folder.findMany({
           where: {
             deletedAt: null,
+            academicYearId: query.academicYearId,
             id: query.folderId,
             createdBy: query.ownerUserId,
             createdAt: { gte: query.from, lte: query.to },

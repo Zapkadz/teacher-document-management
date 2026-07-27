@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { listAcademicYears } from "@/modules/academic-years/academic-year.service";
 import { requireActiveUserPage } from "@/modules/auth/auth.guard";
 import { listUsers } from "@/modules/users/user.service";
 
@@ -42,6 +43,11 @@ async function getOwnerOptions(
 export default async function SearchPage() {
   const user = await requireActiveUserPage();
   const owners = await getOwnerOptions(user.globalRole === "ADMIN", user);
+  const academicYears = (await listAcademicYears()).data.map((year) => ({
+    id: year.id,
+    name: year.name,
+    isActive: year.isActive,
+  }));
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
@@ -62,7 +68,11 @@ export default async function SearchPage() {
           Chỉ hiển thị thư mục và tài liệu bạn có quyền xem.
         </p>
       </header>
-      <SearchClient isAdmin={user.globalRole === "ADMIN"} owners={owners} />
+      <SearchClient
+        academicYears={academicYears}
+        isAdmin={user.globalRole === "ADMIN"}
+        owners={owners}
+      />
     </main>
   );
 }

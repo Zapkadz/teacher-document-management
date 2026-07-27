@@ -71,7 +71,7 @@ describe.skipIf(!runDatabaseTests)(
 
       const sharedRoot = await prisma.folder.findFirstOrThrow({
         where: { workspaceType: "SHARED", parentId: null, deletedAt: null },
-        select: { id: true },
+        select: { id: true, academicYearId: true },
       });
       sharedRootId = sharedRoot.id;
 
@@ -80,6 +80,7 @@ describe.skipIf(!runDatabaseTests)(
           name: `ACL boundary ${suffix}`,
           parentId: sharedRootId,
           workspaceType: "SHARED",
+          academicYearId: sharedRoot.academicYearId,
           createdBy: adminId,
         },
         select: { id: true },
@@ -89,6 +90,7 @@ describe.skipIf(!runDatabaseTests)(
           name: `ACL descendant ${suffix}`,
           parentId: boundary.id,
           workspaceType: "SHARED",
+          academicYearId: sharedRoot.academicYearId,
           createdBy: adminId,
         },
         select: { id: true },

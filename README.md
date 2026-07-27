@@ -1,7 +1,7 @@
 # Kho hồ sơ giáo dục
 
 Web app nội bộ phục vụ lưu trữ và quản lý tài liệu giáo viên. Repository hiện
-hoàn thành **Phase 6**: nền tảng hệ thống, đăng nhập Google theo allowlist,
+hoàn thành **Phase 7**: nền tảng hệ thống, đăng nhập Google theo allowlist,
 quản trị người dùng, kho cá nhân và cây thư mục cá nhân/dùng chung với lazy
 loading, breadcrumbs, di chuyển, chống cycle, xóa mềm, khôi phục và permission
 engine có ACL trực tiếp/kế thừa cho người dùng hoặc nhóm. Hệ thống đã hỗ trợ
@@ -127,6 +127,9 @@ docker compose config --quiet
   vì vậy không cần migration schema mới.
 - Migration Phase 6 bổ sung index cho loại file cùng các bộ lọc action/entity
   của audit log.
+- Migration Phase 7 tạo năm học, gắn cây dùng chung hiện có vào năm hoạt động,
+  bổ sung ràng buộc mỗi năm chỉ có một root dùng chung và chỉ cho phép một năm
+  đang hoạt động.
 
 ## API Phase 1
 
@@ -216,9 +219,28 @@ cố và luôn có thể mở khóa. Khóa kế thừa chỉ có hiệu lực kh
 - `/search`: giao diện tìm kiếm metadata và mở trực tiếp thư mục kết quả.
 
 Search chỉ xét dữ liệu đang hoạt động và luôn lọc `VIEW` ở backend. MVP không
-đọc nội dung bên trong file. Bộ lọc năm học được để đúng Phase 7 vì schema
-academic year chưa được triển khai. Audit log không có API sửa/xóa và preview
+đọc nội dung bên trong file. Bộ lọc năm học đã được bổ sung trong Phase 7.
+Audit log không có API sửa/xóa và preview
 PDF/ảnh hiện cũng tạo log `DOCUMENT_PREVIEWED`.
+
+## API Phase 7
+
+- `GET/POST /api/academic-years`: xem danh sách hoặc tạo năm học.
+- `PATCH /api/academic-years/:id`: cập nhật tên và khoảng ngày.
+- `POST /api/academic-years/:id/activate`: kích hoạt duy nhất một năm học.
+- `GET /api/academic-years/:id/folders`: lấy thư mục nguồn/đích đã lọc quyền.
+- `POST /api/folders/:id/copy/preview`: kiểm tra quyền, xung đột, độ sâu và
+  thống kê trước khi sao chép.
+- `POST /api/folders/:id/copy`: sao chép một nhánh cùng ACL trực tiếp trong
+  transaction.
+- `/academic-years`: giao diện quản lý năm học và quy trình preview/xác nhận
+  sao chép.
+
+Mỗi năm học có một root `SHARED`. Tree API và tìm kiếm hỗ trợ
+`academicYearId`, mặc định dùng năm đang hoạt động. Copy yêu cầu `VIEW` trên
+toàn bộ nhánh nguồn và `CREATE_SUBFOLDER` ở đích; sao chép ACL còn yêu cầu
+`MANAGE_PERMISSIONS` ở cả nguồn lẫn đích. Phase 7 không sao chép tài liệu,
+object storage hoặc trạng thái khóa. Cây cực lớn sẽ cần job runner ở Phase 8.
 
 Muốn dừng container mà vẫn giữ dữ liệu:
 

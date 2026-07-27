@@ -55,6 +55,12 @@ export default async function DashboardPage() {
           >
             Hoạt động
           </Link>
+          <Link
+            className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+            href="/academic-years"
+          >
+            Năm học
+          </Link>
           {user.globalRole === "ADMIN" ? (
             <Link
               className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-900 hover:bg-emerald-100"

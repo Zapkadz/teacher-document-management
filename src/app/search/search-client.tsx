@@ -9,6 +9,12 @@ type OwnerOption = {
   fullName: string | null;
 };
 
+type AcademicYearOption = {
+  id: string;
+  name: string;
+  isActive: boolean;
+};
+
 type FolderResult = {
   type: "FOLDER";
   id: string;
@@ -61,14 +67,17 @@ function formatBytes(value: number | null) {
 export function SearchClient({
   owners,
   isAdmin,
+  academicYears = [],
 }: {
   owners: OwnerOption[];
   isAdmin: boolean;
+  academicYears?: AcademicYearOption[];
 }) {
   const [query, setQuery] = useState("");
   const [resultType, setResultType] = useState("all");
   const [fileType, setFileType] = useState("");
   const [ownerUserId, setOwnerUserId] = useState("");
+  const [academicYearId, setAcademicYearId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -91,6 +100,7 @@ export function SearchClient({
     });
     if (fileType) params.set("fileType", fileType);
     if (ownerUserId) params.set("ownerUserId", ownerUserId);
+    if (academicYearId) params.set("academicYearId", academicYearId);
     if (from) params.set("from", `${from}T00:00:00.000Z`);
     if (to) params.set("to", `${to}T23:59:59.999Z`);
 
@@ -196,6 +206,22 @@ export function SearchClient({
               <option key={owner.id} value={owner.id}>
                 {owner.fullName ?? owner.email}
                 {isAdmin ? ` — ${owner.email}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-2 text-sm font-medium">
+          Năm học
+          <select
+            className="rounded-lg border border-slate-300 px-3 py-2 font-normal"
+            onChange={(event) => setAcademicYearId(event.target.value)}
+            value={academicYearId}
+          >
+            <option value="">Mọi năm học và kho cá nhân</option>
+            {academicYears.map((year) => (
+              <option key={year.id} value={year.id}>
+                {year.name}
+                {year.isActive ? " · đang hoạt động" : ""}
               </option>
             ))}
           </select>

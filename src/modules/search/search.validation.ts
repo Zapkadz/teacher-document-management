@@ -16,6 +16,7 @@ export const searchSchema = z
     q: z.string().trim().min(2).max(100),
     type: z.enum(["document", "folder", "all"]).default("all"),
     fileType: z.enum(SEARCH_FILE_TYPES).optional(),
+    academicYearId: z.uuid().optional(),
     ownerUserId: z.uuid().optional(),
     folderId: z.uuid().optional(),
     from: z.coerce.date().optional(),

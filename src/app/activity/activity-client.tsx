@@ -153,11 +153,13 @@ export function ActivityClient({
             value={entityType}
           >
             <option value="">Mọi loại</option>
-            {["AUTH", "USER", "FOLDER", "DOCUMENT"].map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
+            {["AUTH", "USER", "FOLDER", "DOCUMENT", "ACADEMIC_YEAR"].map(
+              (item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ),
+            )}
           </select>
         </label>
         <label className="grid gap-2 text-sm font-medium">

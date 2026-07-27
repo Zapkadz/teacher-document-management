@@ -13,12 +13,19 @@ type OwnerOption = {
   fullName: string | null;
 };
 
+type AcademicYearOption = {
+  id: string;
+  name: string;
+  isActive: boolean;
+};
+
 type TreeNode = {
   id: string;
   name: string;
   parentId: string | null;
   workspaceType: Workspace;
   ownerUserId: string | null;
+  academicYearId: string | null;
   isLocked: boolean;
   sortOrder: number;
   deletedAt: string | null;
@@ -172,11 +179,13 @@ export function FolderExplorer({
   currentUserId,
   isAdmin,
   owners,
+  academicYears = [],
   initialFolder = null,
 }: {
   currentUserId: string;
   isAdmin: boolean;
   owners: OwnerOption[];
+  academicYears?: AcademicYearOption[];
   initialFolder?: FolderDetails | null;
 }) {
   const [workspace, setWorkspace] = useState<Workspace>(
@@ -184,6 +193,12 @@ export function FolderExplorer({
   );
   const [ownerUserId, setOwnerUserId] = useState(
     initialFolder?.ownerUserId ?? currentUserId,
+  );
+  const [academicYearId, setAcademicYearId] = useState(
+    initialFolder?.academicYearId ??
+      academicYears.find(({ isActive }) => isActive)?.id ??
+      academicYears[0]?.id ??
+      "",
   );
   const [roots, setRoots] = useState<TreeNode[]>([]);
   const [childrenByParent, setChildrenByParent] = useState<
@@ -210,6 +225,8 @@ export function FolderExplorer({
     });
     if (workspace === "PERSONAL") {
       query.set("ownerUserId", ownerUserId);
+    } else if (academicYearId) {
+      query.set("academicYearId", academicYearId);
     }
     if (options?.rootId) query.set("rootId", options.rootId);
     if (options?.deleted) query.set("deleted", "true");
@@ -225,7 +242,9 @@ export function FolderExplorer({
       setSelected((current) =>
         current &&
         current.workspaceType === workspace &&
-        (workspace === "SHARED" || current.ownerUserId === ownerUserId)
+        (workspace === "PERSONAL"
+          ? current.ownerUserId === ownerUserId
+          : current.academicYearId === academicYearId)
           ? current
           : null,
       );
@@ -256,7 +275,7 @@ export function FolderExplorer({
     };
     // treeUrl is intentionally derived from these two state values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ownerUserId, workspace]);
+  }, [academicYearId, ownerUserId, workspace]);
 
   async function reloadTree(successMessage?: string) {
     setBusy(true);
@@ -342,6 +361,7 @@ export function FolderExplorer({
           name,
           parentId: selected.id,
           workspaceType: selected.workspaceType,
+          academicYearId: selected.academicYearId ?? undefined,
         }),
       });
       await reloadTree("Đã tạo thư mục.");
@@ -514,6 +534,23 @@ export function FolderExplorer({
               {owners.map((owner) => (
                 <option key={owner.id} value={owner.id}>
                   {owner.fullName ?? owner.email} — {owner.email}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {workspace === "SHARED" ? (
+          <label className="ml-auto flex items-center gap-2 text-sm">
+            Năm học
+            <select
+              className="max-w-64 rounded-lg border border-slate-300 px-3 py-2"
+              onChange={(event) => setAcademicYearId(event.target.value)}
+              value={academicYearId}
+            >
+              {academicYears.map((year) => (
+                <option key={year.id} value={year.id}>
+                  {year.name}
+                  {year.isActive ? " · đang hoạt động" : ""}
                 </option>
               ))}
             </select>

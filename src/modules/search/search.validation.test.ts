@@ -18,4 +18,11 @@ describe("search query validation", () => {
       searchSchema.safeParse({ q: "giáo án", fileType: "exe" }).success,
     ).toBe(false);
   });
+
+  it("accepts an academic year metadata filter", () => {
+    const academicYearId = "10000000-0000-4000-8000-000000000001";
+    expect(searchSchema.parse({ q: "giáo án", academicYearId })).toMatchObject({
+      academicYearId,
+    });
+  });
 });

@@ -22,6 +22,7 @@ export const createFolderSchema = z.object({
   name: folderNameSchema,
   parentId: uuidSchema,
   workspaceType: z.enum(["PERSONAL", "SHARED"]),
+  academicYearId: uuidSchema.optional(),
 });
 
 export const renameFolderSchema = z
@@ -33,6 +34,14 @@ export const renameFolderSchema = z
 export const moveFolderSchema = z
   .object({
     targetParentId: uuidSchema,
+  })
+  .strict();
+
+export const copyFolderSchema = z
+  .object({
+    targetParentId: uuidSchema,
+    copyPermissions: z.boolean().default(true),
+    copyDocuments: z.literal(false).default(false),
   })
   .strict();
 
@@ -53,9 +62,11 @@ export const folderTreeQuerySchema = z.object({
   workspace: workspaceQuerySchema,
   rootId: uuidSchema.optional(),
   ownerUserId: uuidSchema.optional(),
+  academicYearId: uuidSchema.optional(),
   deleted: booleanQuerySchema,
 });
 
 export type CreateFolderInput = z.infer<typeof createFolderSchema>;
 export type MoveFolderInput = z.infer<typeof moveFolderSchema>;
+export type CopyFolderInput = z.infer<typeof copyFolderSchema>;
 export type FolderTreeQuery = z.infer<typeof folderTreeQuerySchema>;

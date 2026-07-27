@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { z } from "zod";
 
+import { listAcademicYears } from "@/modules/academic-years/academic-year.service";
 import { requireActiveUserPage } from "@/modules/auth/auth.guard";
 import { getFolderDetails } from "@/modules/folders/folder.service";
 import { listUsers } from "@/modules/users/user.service";
@@ -52,6 +53,11 @@ export default async function FoldersPage({
     user.globalRole === "ADMIN"
       ? await listAllPersonalWorkspaceOwners()
       : [{ id: user.id, email: user.email, fullName: user.name }];
+  const academicYears = (await listAcademicYears()).data.map((year) => ({
+    id: year.id,
+    name: year.name,
+    isActive: year.isActive,
+  }));
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-10">
@@ -80,6 +86,7 @@ export default async function FoldersPage({
       </div>
 
       <FolderExplorer
+        academicYears={academicYears}
         currentUserId={user.id}
         initialFolder={initialFolder}
         isAdmin={user.globalRole === "ADMIN"}
