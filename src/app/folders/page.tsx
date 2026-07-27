@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { z } from "zod";
 
+import { listAcademicYears } from "@/modules/academic-years/academic-year.service";
 import { requireActiveUserPage } from "@/modules/auth/auth.guard";
+import { getFolderDetails } from "@/modules/folders/folder.service";
 import { listUsers } from "@/modules/users/user.service";
 
 import { FolderExplorer } from "./folder-explorer";
@@ -23,12 +26,38 @@ async function listAllPersonalWorkspaceOwners() {
   );
 }
 
-export default async function FoldersPage() {
+export default async function FoldersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ folderId?: string | string[] }>;
+}) {
   const user = await requireActiveUserPage();
+  const rawFolderId = (await searchParams).folderId;
+  const folderId = z
+    .uuid()
+    .safeParse(typeof rawFolderId === "string" ? rawFolderId : undefined);
+  const initialFolder = folderId.success
+    ? await getFolderDetails(folderId.data, {
+        id: user.id,
+        globalRole: user.globalRole,
+      })
+        .then(({ data }) => ({
+          ...data,
+          deletedAt: data.deletedAt?.toISOString() ?? null,
+          createdAt: data.createdAt.toISOString(),
+          updatedAt: data.updatedAt.toISOString(),
+        }))
+        .catch(() => null)
+    : null;
   const owners =
     user.globalRole === "ADMIN"
       ? await listAllPersonalWorkspaceOwners()
       : [{ id: user.id, email: user.email, fullName: user.name }];
+  const academicYears = (await listAcademicYears()).data.map((year) => ({
+    id: year.id,
+    name: year.name,
+    isActive: year.isActive,
+  }));
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-10">
@@ -36,7 +65,15 @@ export default async function FoldersPage() {
         <Link className="font-semibold text-emerald-800" href="/dashboard">
           ← Bảng điều khiển
         </Link>
-        <span className="text-sm text-slate-500">{user.email}</span>
+        <div className="flex items-center gap-4 text-sm">
+          <Link className="font-semibold text-emerald-700" href="/search">
+            Tìm kiếm
+          </Link>
+          <Link className="font-semibold text-slate-700" href="/activity">
+            Hoạt động
+          </Link>
+          <span className="text-slate-500">{user.email}</span>
+        </div>
       </nav>
 
       <div className="mt-8">
@@ -49,7 +86,9 @@ export default async function FoldersPage() {
       </div>
 
       <FolderExplorer
+        academicYears={academicYears}
         currentUserId={user.id}
+        initialFolder={initialFolder}
         isAdmin={user.globalRole === "ADMIN"}
         owners={owners}
       />

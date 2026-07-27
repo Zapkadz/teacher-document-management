@@ -59,11 +59,37 @@ async function main() {
       });
     }
 
+    let activeYear = await tx.academicYear.findFirst({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+
+    if (!activeYear) {
+      const now = new Date();
+      const startYear =
+        now.getUTCMonth() >= 6
+          ? now.getUTCFullYear()
+          : now.getUTCFullYear() - 1;
+      const name = `${startYear}-${startYear + 1}`;
+      activeYear = await tx.academicYear.upsert({
+        where: { name },
+        create: {
+          name,
+          startsOn: new Date(Date.UTC(startYear, 7, 1)),
+          endsOn: new Date(Date.UTC(startYear + 1, 4, 31)),
+          isActive: true,
+        },
+        update: { isActive: true },
+        select: { id: true, name: true },
+      });
+    }
+
     const sharedRoot = await tx.folder.findFirst({
       where: {
         workspaceType: "SHARED",
         parentId: null,
         deletedAt: null,
+        academicYearId: activeYear.id,
       },
       select: { id: true },
     });
@@ -73,6 +99,7 @@ async function main() {
         data: {
           name: "Kho dùng chung",
           workspaceType: "SHARED",
+          academicYearId: activeYear.id,
           createdBy: admin.id,
         },
         select: { id: true },

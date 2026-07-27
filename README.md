@@ -1,14 +1,15 @@
 # Kho hồ sơ giáo dục
 
 Web app nội bộ phục vụ lưu trữ và quản lý tài liệu giáo viên. Repository hiện
-hoàn thành **Phase 5**: nền tảng hệ thống, đăng nhập Google theo allowlist,
+hoàn thành **Phase 7**: nền tảng hệ thống, đăng nhập Google theo allowlist,
 quản trị người dùng, kho cá nhân và cây thư mục cá nhân/dùng chung với lazy
 loading, breadcrumbs, di chuyển, chống cycle, xóa mềm, khôi phục và permission
 engine có ACL trực tiếp/kế thừa cho người dùng hoặc nhóm. Hệ thống đã hỗ trợ
 upload file trực tiếp vào MinIO/S3, version 1, danh sách tài liệu, preview PDF/ảnh,
 download có kiểm tra quyền và liên kết Google Drive/YouTube. Quyền ownership,
 khóa thư mục, sửa/di chuyển/xóa mềm tài liệu, thùng rác và khôi phục đã được áp
-dụng đồng nhất ở backend và giao diện.
+dụng đồng nhất ở backend và giao diện. Audit append-only và tìm kiếm metadata đều
+lọc dữ liệu theo quyền hiệu lực trước khi trả về client.
 
 ## Yêu cầu
 
@@ -124,6 +125,11 @@ docker compose config --quiet
   lần. Constraint database bảo đảm metadata file/link nhất quán.
 - Phase 5 dùng các cột ownership, soft-delete và folder-lock đã có từ Phase 2/4,
   vì vậy không cần migration schema mới.
+- Migration Phase 6 bổ sung index cho loại file cùng các bộ lọc action/entity
+  của audit log.
+- Migration Phase 7 tạo năm học, gắn cây dùng chung hiện có vào năm hoạt động,
+  bổ sung ràng buộc mỗi năm chỉ có một root dùng chung và chỉ cho phép một năm
+  đang hoạt động.
 
 ## API Phase 1
 
@@ -200,6 +206,41 @@ Khóa thư mục không chặn xem, preview hoặc download, nhưng chặn ngư�
 upload, tạo/sửa/di chuyển/xóa thư mục và tài liệu. Admin bypass khóa để xử lý sự
 cố và luôn có thể mở khóa. Khóa kế thừa chỉ có hiệu lực khi thư mục nguồn bật
 `lockDescendants`.
+
+## API Phase 6
+
+- `GET /api/audit-logs`: lọc theo thư mục, actor, action, entity, khoảng ngày và
+  phân trang. Admin xem toàn bộ; người dùng xem hoạt động của mình hoặc log trong
+  thư mục có `VIEW_AUDIT`.
+- `GET /api/search`: tìm folder/document theo title, description, tên file,
+  người tạo và tên thư mục; hỗ trợ lọc loại kết quả, loại file, owner, folder và
+  khoảng ngày.
+- `/activity`: giao diện hoạt động cá nhân/phạm vi được cấp quyền.
+- `/search`: giao diện tìm kiếm metadata và mở trực tiếp thư mục kết quả.
+
+Search chỉ xét dữ liệu đang hoạt động và luôn lọc `VIEW` ở backend. MVP không
+đọc nội dung bên trong file. Bộ lọc năm học đã được bổ sung trong Phase 7.
+Audit log không có API sửa/xóa và preview
+PDF/ảnh hiện cũng tạo log `DOCUMENT_PREVIEWED`.
+
+## API Phase 7
+
+- `GET/POST /api/academic-years`: xem danh sách hoặc tạo năm học.
+- `PATCH /api/academic-years/:id`: cập nhật tên và khoảng ngày.
+- `POST /api/academic-years/:id/activate`: kích hoạt duy nhất một năm học.
+- `GET /api/academic-years/:id/folders`: lấy thư mục nguồn/đích đã lọc quyền.
+- `POST /api/folders/:id/copy/preview`: kiểm tra quyền, xung đột, độ sâu và
+  thống kê trước khi sao chép.
+- `POST /api/folders/:id/copy`: sao chép một nhánh cùng ACL trực tiếp trong
+  transaction.
+- `/academic-years`: giao diện quản lý năm học và quy trình preview/xác nhận
+  sao chép.
+
+Mỗi năm học có một root `SHARED`. Tree API và tìm kiếm hỗ trợ
+`academicYearId`, mặc định dùng năm đang hoạt động. Copy yêu cầu `VIEW` trên
+toàn bộ nhánh nguồn và `CREATE_SUBFOLDER` ở đích; sao chép ACL còn yêu cầu
+`MANAGE_PERMISSIONS` ở cả nguồn lẫn đích. Phase 7 không sao chép tài liệu,
+object storage hoặc trạng thái khóa. Cây cực lớn sẽ cần job runner ở Phase 8.
 
 Muốn dừng container mà vẫn giữ dữ liệu:
 

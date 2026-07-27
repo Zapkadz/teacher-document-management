@@ -9,7 +9,7 @@ export default function Home() {
             aria-hidden="true"
             className="h-2 w-2 rounded-full bg-emerald-500"
           />
-          Phase 1 đã sẵn sàng
+          Phase 7 đã sẵn sàng
         </div>
 
         <h1 className="text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">

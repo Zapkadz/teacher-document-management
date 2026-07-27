@@ -37,6 +37,7 @@ const folderSelect = {
   parentId: true,
   workspaceType: true,
   ownerUserId: true,
+  academicYearId: true,
   inheritPermissions: true,
   isLocked: true,
   lockDescendants: true,
@@ -67,7 +68,12 @@ type TreeNodeRecord = Prisma.FolderGetPayload<{
 
 type PathRow = Pick<
   Folder,
-  "id" | "name" | "parentId" | "workspaceType" | "ownerUserId"
+  | "id"
+  | "name"
+  | "parentId"
+  | "workspaceType"
+  | "ownerUserId"
+  | "academicYearId"
 > & {
   depth: number;
 };
@@ -96,6 +102,7 @@ function toTreeNode(folder: TreeNodeRecord, hasChildren?: boolean) {
     parentId: folder.parentId,
     workspaceType: folder.workspaceType,
     ownerUserId: folder.ownerUserId,
+    academicYearId: folder.academicYearId,
     isLocked: folder.isLocked,
     sortOrder: folder.sortOrder,
     deletedAt: folder.deletedAt,
@@ -177,6 +184,7 @@ async function getFolderPath(
         parent_id,
         workspace_type,
         owner_user_id,
+        academic_year_id,
         1 AS depth
       FROM folders
       WHERE id = ${folderId}::uuid
@@ -189,6 +197,7 @@ async function getFolderPath(
         parent.parent_id,
         parent.workspace_type,
         parent.owner_user_id,
+        parent.academic_year_id,
         ancestors.depth + 1
       FROM folders parent
       INNER JOIN ancestors ON ancestors.parent_id = parent.id
@@ -200,6 +209,7 @@ async function getFolderPath(
       parent_id AS "parentId",
       workspace_type AS "workspaceType",
       owner_user_id AS "ownerUserId",
+      academic_year_id AS "academicYearId",
       depth
     FROM ancestors
     ORDER BY depth DESC
@@ -266,12 +276,13 @@ async function assertNameAvailable(
 }
 
 function assertSameWorkspace(
-  source: Pick<Folder, "workspaceType" | "ownerUserId">,
-  target: Pick<Folder, "workspaceType" | "ownerUserId">,
+  source: Pick<Folder, "workspaceType" | "ownerUserId" | "academicYearId">,
+  target: Pick<Folder, "workspaceType" | "ownerUserId" | "academicYearId">,
 ): void {
   if (
     source.workspaceType !== target.workspaceType ||
-    source.ownerUserId !== target.ownerUserId
+    source.ownerUserId !== target.ownerUserId ||
+    source.academicYearId !== target.academicYearId
   ) {
     throw new AppError(
       "INVALID_MOVE",
@@ -293,6 +304,7 @@ async function getWorkspaceRoot(
   actor: FolderActor,
   workspaceType: WorkspaceType,
   ownerUserId?: string,
+  academicYearId?: string,
 ): Promise<TreeNodeRecord | null> {
   const prisma = getPrismaClient();
 
@@ -328,6 +340,14 @@ async function getWorkspaceRoot(
       workspaceType: "SHARED",
       parentId: null,
       deletedAt: null,
+      academicYearId:
+        academicYearId ??
+        (
+          await prisma.academicYear.findFirst({
+            where: { isActive: true },
+            select: { id: true },
+          })
+        )?.id,
     },
     select: treeNodeSelect,
   });
@@ -361,6 +381,16 @@ async function listDeletedRoots(actor: FolderActor, query: FolderTreeQuery) {
     where: {
       workspaceType: query.workspace,
       ownerUserId,
+      academicYearId:
+        query.workspace === "SHARED"
+          ? (query.academicYearId ??
+            (
+              await prisma.academicYear.findFirst({
+                where: { isActive: true },
+                select: { id: true },
+              })
+            )?.id)
+          : null,
       deletedAt: { not: null },
       OR: [{ parentId: null }, { parent: { deletedAt: null } }],
     },
@@ -401,6 +431,7 @@ export async function getFolderTree(
     actor,
     query.workspace,
     query.ownerUserId,
+    query.academicYearId,
   );
 
   if (!root) {
@@ -419,7 +450,10 @@ export async function getFolderTree(
 
   if (
     parent.workspaceType !== query.workspace ||
-    (query.workspace === "PERSONAL" && parent.ownerUserId !== root.ownerUserId)
+    (query.workspace === "PERSONAL" &&
+      parent.ownerUserId !== root.ownerUserId) ||
+    (query.workspace === "SHARED" &&
+      parent.academicYearId !== root.academicYearId)
   ) {
     throw new AppError(
       "FORBIDDEN",
@@ -465,6 +499,7 @@ export async function getFolderDetails(id: string, actor: FolderActor) {
       parentId: folder.parentId,
       workspaceType: folder.workspaceType,
       ownerUserId: folder.ownerUserId,
+      academicYearId: folder.academicYearId,
       inheritPermissions: folder.inheritPermissions,
       isLocked: folder.isLocked,
       lockDescendants: folder.lockDescendants,
@@ -541,6 +576,17 @@ export async function createFolder(
         );
       }
 
+      if (
+        input.academicYearId !== undefined &&
+        input.academicYearId !== parent.academicYearId
+      ) {
+        throw new AppError(
+          "ACADEMIC_YEAR_MISMATCH",
+          "Năm học không khớp với thư mục cha",
+          409,
+        );
+      }
+
       const path = await getFolderPath(tx, parent.id);
       const maxDepth = getMaxFolderDepth();
 
@@ -565,6 +611,7 @@ export async function createFolder(
           parentId: parent.id,
           workspaceType: parent.workspaceType,
           ownerUserId: parent.ownerUserId,
+          academicYearId: parent.academicYearId,
           sortOrder: (lastSibling._max.sortOrder ?? -1) + 1,
           createdBy: actor.id,
         },
@@ -582,6 +629,7 @@ export async function createFolder(
             name: folder.name,
             parentId: parent.id,
             workspaceType: folder.workspaceType,
+            academicYearId: folder.academicYearId,
           },
         },
       });
